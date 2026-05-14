@@ -2,7 +2,7 @@ import { Component, OnDestroy, ElementRef, ViewChild, signal, computed } from '@
 import { CommonModule } from '@angular/common';
 import { ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { PortfolioService } from '../../core/services/portfolio';
-import { createChart, ColorType, LineSeries } from 'lightweight-charts';
+import { createChart, ColorType, LineSeries, createSeriesMarkers } from 'lightweight-charts';
 
 @Component({
   selector: 'app-portfolio',
@@ -85,6 +85,9 @@ export class Portfolio implements OnDestroy {
     if (!this.chartContainer?.nativeElement || pareto.length === 0) return;
     this.chart?.remove();
 
+    // CVaR artan sıraya göre sırala (scatter için X ekseni düzeni)
+    const sorted = [...pareto].sort((a, b) => (a.cvar ?? 0) - (b.cvar ?? 0));
+
     this.chart = createChart(this.chartContainer.nativeElement, {
       width: this.chartContainer.nativeElement.offsetWidth,
       height: 300,
@@ -92,12 +95,33 @@ export class Portfolio implements OnDestroy {
       grid: { vertLines: { color: '#1e2235' }, horzLines: { color: '#1e2235' } },
       rightPriceScale: { borderColor: '#2a2d3e' },
       timeScale: { borderColor: '#2a2d3e', visible: false },
+      crosshair: { vertLine: { visible: false }, horzLine: { visible: true } },
     });
 
-    const series = this.chart.addSeries(LineSeries, { color: '#6366f1', lineWidth: 2 });
-    const sorted = [...pareto].sort((a, b) => (a.cvar ?? 0) - (b.cvar ?? 0));
-    const data = sorted.map((p, i) => ({ time: (i + 1) as any, value: (p.expected_return ?? 0) * 365 * 100 }));
+    // Bağlantı çizgisi olmayan LineSeries — her nokta ayrı marker olacak
+    const series = this.chart.addSeries(LineSeries, {
+      color: '#6366f1',
+      lineVisible: false,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+
+    // time: sıra indeksi (CVaR sıralı), value: yıllık getiri %
+    const data = sorted.map((p, i) => ({
+      time: (i + 1) as any,
+      value: parseFloat(((p.expected_return ?? 0) * 365 * 100).toFixed(4)),
+    }));
     series.setData(data);
+
+    // Her Pareto noktası için scatter marker — tooltip'te CVaR göster
+    createSeriesMarkers(series, sorted.map((p, i) => ({
+      time: (i + 1) as any,
+      position: 'inBar' as const,
+      color: '#6366f1',
+      shape: 'circle' as const,
+      size: 2,
+      text: `CVaR ${((p.cvar ?? 0) * 100).toFixed(2)}%`,
+    })));
   }
 
   statusClass(s: string): string {
