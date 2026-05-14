@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import patch
 from django.urls import reverse
 from rest_framework.test import APIClient
 from users.models import User
@@ -68,3 +69,32 @@ class TestPortfolioJob:
         response = auth_client.delete(reverse('job_delete', kwargs={'pk': existing_job.id}))
         assert response.status_code == 200
         assert not PortfolioJob.objects.filter(id=existing_job.id).exists()
+
+    def test_job_belongs_to_user(self, db, existing_job):
+        other = User.objects.create_user(
+            email='other@test.com',
+            username='otherportfolio',
+            password='Test1234!',
+        )
+        other_client = APIClient()
+        login = other_client.post(reverse('login'), {
+            'email': 'other@test.com',
+            'password': 'Test1234!',
+        }, format='json')
+        other_client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
+        response = other_client.get(reverse('job_detail', kwargs={'pk': existing_job.id}))
+        assert response.status_code == 404
+
+    def test_job_default_params(self, auth_client):
+        response = auth_client.post(reverse('job_list'), {}, format='json')
+        assert response.status_code == 201
+        job = PortfolioJob.objects.get(id=response.data['id'])
+        assert isinstance(job.params, dict)
+
+    def test_celery_task_mock(self, auth_client):
+        with patch('portfolio.tasks.run_portfolio_optimization.delay') as mock_delay:
+            response = auth_client.post(reverse('job_list'), {
+                'params': {'assets': ['BTC', 'ETH'], 'risk_tolerance': 'low'},
+            }, format='json')
+        assert response.status_code == 201
+        mock_delay.assert_called_once()
