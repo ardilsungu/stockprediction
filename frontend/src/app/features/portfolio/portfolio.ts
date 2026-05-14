@@ -2,7 +2,7 @@ import { Component, OnInit, OnDestroy, AfterViewInit, ElementRef, ViewChild } fr
 import { CommonModule } from '@angular/common';
 import { ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { PortfolioService } from '../../core/services/portfolio';
-import { createChart, ColorType } from 'lightweight-charts';
+import { createChart, ColorType, LineSeries } from 'lightweight-charts';
 
 @Component({
   selector: 'app-portfolio',
@@ -60,7 +60,7 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
   }
 
   private startPolling(jobId: string): void {
-    this.pollInterval = setInterval(() => {
+    const poll = () => {
       this.portfolioService.getJobDetail(jobId).subscribe({
         next: (job) => {
           this.currentJob = job;
@@ -72,7 +72,9 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
           }
         },
       });
-    }, 10000);
+    };
+    poll();
+    this.pollInterval = setInterval(poll, 5000);
   }
 
   private clearPoll(): void {
@@ -92,8 +94,8 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
       timeScale: { borderColor: '#2a2d3e', visible: false },
     });
 
-    const series = this.chart.addLineSeries({
-      color: '#6366f1', lineWidth: 2, pointMarkersVisible: true,
+    const series = this.chart.addSeries(LineSeries, {
+      color: '#6366f1', lineWidth: 2,
     });
 
     const sorted = [...pareto].sort((a, b) => a.cvar - b.cvar);
