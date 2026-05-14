@@ -4,7 +4,17 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
+from .models import AuditLog
 from .serializers import RegisterSerializer, LoginSerializer, UserProfileSerializer
+
+
+def _log(request, user, action):
+    AuditLog.objects.create(
+        user=user,
+        action=action,
+        detail={'email': user.email},
+        ip_address=request.META.get('REMOTE_ADDR'),
+    )
 
 
 @api_view(['POST'])
@@ -13,6 +23,7 @@ def register(request):
     serializer = RegisterSerializer(data=request.data)
     if serializer.is_valid():
         user = serializer.save()
+        _log(request, user, 'register')
         refresh = RefreshToken.for_user(user)
         return Response({
             'message': 'Kayıt başarılı.',
@@ -32,6 +43,7 @@ def login(request):
             password=serializer.validated_data['password']
         )
         if user:
+            _log(request, user, 'login')
             refresh = RefreshToken.for_user(user)
             return Response({
                 'access': str(refresh.access_token),
@@ -48,6 +60,7 @@ def logout(request):
         refresh_token = request.data['refresh']
         token = RefreshToken(refresh_token)
         token.blacklist()
+        _log(request, request.user, 'logout')
         return Response({'message': 'Çıkış başarılı.'})
     except Exception:
         return Response({'error': 'Geçersiz token.'}, status=status.HTTP_400_BAD_REQUEST)
