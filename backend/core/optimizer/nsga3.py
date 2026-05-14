@@ -31,6 +31,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 warnings.filterwarnings("ignore")
+import urllib3; urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # pymoo imports
 from pymoo.algorithms.moo.nsga3 import NSGA3
@@ -225,7 +226,20 @@ def fetch_top_coins(
     -------
     DataFrame  [symbol, coingecko_id, name, volume_24h, market_cap]
     """
-    import requests
+    import ssl, requests
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.ssl_ import create_urllib3_context
+
+    class _NoVerifyAdapter(HTTPAdapter):
+        def init_poolmanager(self, *args, **kwargs):
+            ctx = create_urllib3_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            kwargs['ssl_context'] = ctx
+            return super().init_poolmanager(*args, **kwargs)
+
+    _session = requests.Session()
+    _session.mount('https://', _NoVerifyAdapter())
 
     order_map = {
         "market_cap": "market_cap_desc",
@@ -257,7 +271,7 @@ def fetch_top_coins(
             try:
                 # User-Agent ekle — bazı CDN'ler User-Agent'sız istekleri engeller
                 headers = {"User-Agent": "Mozilla/5.0 (crypto-portfolio-optimizer)"}
-                r = requests.get(url, params=params, headers=headers, timeout=30)
+                r = _session.get(url, params=params, headers=headers, timeout=30)
                 r.raise_for_status()
                 batch = r.json()
                 all_coins.extend(batch)
@@ -394,6 +408,8 @@ def load_prices_from_yfinance(
     # ── AKILLI HİZALAMA (trailing-window) ─────────────────────────────
     # Son N gün penceresinde tam veriye sahip coinleri tut.
     # Yetersiz coin kalırsa pencereyi daralt.
+    # min_lookback_days, lookback_days'den büyük olamaz — aksi halde range() boş olur
+    min_lookback_days = min(min_lookback_days, lookback_days)
     tried = []
     aligned = None
     for window_size in range(lookback_days, min_lookback_days - 1, -50):
