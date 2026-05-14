@@ -1,0 +1,35 @@
+<div class="page">
+  <div class="page-header">
+    <h1 class="page-title">Watchlist</h1>
+    <span class="muted">{{ watchlist.length }} varlık takip ediliyor</span>
+  </div>
+
+  @if (loading) {
+    <p class="muted">Yükleniyor...</p>
+  } @else {
+    <div class="card">
+      <h2 class="card-title">Tüm Varlıklar</h2>
+      <div class="asset-grid">
+        @for (asset of assets; track asset.id) {
+          <div class="asset-card" [class.watched]="isWatched(asset.id)">
+            <div class="asset-info">
+              <span class="asset-symbol">{{ asset.symbol }}</span>
+              <span class="asset-name">{{ asset.name }}</span>
+              <span class="asset-cap">
+                ${{ (asset.market_cap / 1e9).toFixed(1) }}B
+              </span>
+            </div>
+            <button
+              class="btn-toggle"
+              [class.active]="isWatched(asset.id)"
+              [disabled]="actionLoading[asset.id]"
+              (click)="toggle(asset)"
+            >
+              {{ actionLoading[asset.id] ? '...' : isWatched(asset.id) ? '− Kaldır' : '+ Ekle' }}
+            </button>
+          </div>
+        }
+      </div>
+    </div>
+  }
+</div>

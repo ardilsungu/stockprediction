@@ -1,0 +1,94 @@
+<div class="page">
+  <div class="page-header">
+    <h1 class="page-title">Portfolio Optimizasyonu</h1>
+    <p class="page-subtitle">NSGA-III + CVaR çok amaçlı optimizasyon</p>
+  </div>
+
+  <div class="card mb-24">
+    <h2 class="card-title">Parametreler</h2>
+    <form [formGroup]="form" (ngSubmit)="startJob()" class="param-form">
+      <div class="param-grid">
+        <div class="form-group">
+          <label>Coin Sayısı (n_coins)</label>
+          <input type="number" formControlName="n_coins" />
+        </div>
+        <div class="form-group">
+          <label>Lookback (gün)</label>
+          <input type="number" formControlName="lookback_days" />
+        </div>
+        <div class="form-group">
+          <label>Nesil Sayısı (n_gen)</label>
+          <input type="number" formControlName="n_gen" />
+        </div>
+        <div class="form-group">
+          <label>Popülasyon (pop_size)</label>
+          <input type="number" formControlName="pop_size" />
+        </div>
+      </div>
+      @if (errorMessage) {
+        <div class="error-banner">{{ errorMessage }}</div>
+      }
+      <button type="submit" class="btn-primary" [disabled]="submitting">
+        {{ submitting ? 'Başlatılıyor...' : 'Optimizasyonu Başlat' }}
+      </button>
+    </form>
+  </div>
+
+  @if (currentJob) {
+    <div class="card mb-24">
+      <div class="job-status-row">
+        <h2 class="card-title" style="margin:0">Job Durumu</h2>
+        <span class="badge {{ statusClass(currentJob.status) }}">
+          {{ statusLabel(currentJob.status) }}
+        </span>
+      </div>
+      <p class="muted mt-8">ID: {{ currentJob.id }}</p>
+      @if (currentJob.status === 'running') {
+        <div class="progress-bar"><div class="progress-fill"></div></div>
+      }
+    </div>
+  }
+
+  @if (strategies.length > 0) {
+    <div class="card mb-24">
+      <h2 class="card-title">Strateji Sonuçları</h2>
+      <div class="table-wrapper">
+        <table class="result-table">
+          <thead>
+            <tr>
+              <th>Strateji</th>
+              <th>Yıllık Getiri</th>
+              <th>Volatilite</th>
+              <th>Sharpe</th>
+              <th>Sortino</th>
+              <th>CVaR (yıllık)</th>
+              <th>Max Drawdown</th>
+              <th>Aktif Varlık</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (s of strategies; track s.key) {
+              <tr>
+                <td class="strategy-name">{{ s.name }}</td>
+                <td [class.positive]="s.annual_return > 0" [class.negative]="s.annual_return < 0">
+                  {{ formatPct(s.annual_return) }}
+                </td>
+                <td>{{ formatPct(s.annual_vol) }}</td>
+                <td>{{ s.sharpe?.toFixed(3) }}</td>
+                <td>{{ s.sortino?.toFixed(3) }}</td>
+                <td>{{ formatPct(s.cvar_annual) }}</td>
+                <td>{{ formatPct(s.max_drawdown) }}</td>
+                <td class="center">{{ s.n_active }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">Pareto Frontier (CVaR sıralı — Yıllık Getiri %)</h2>
+      <div #chartContainer class="chart-container"></div>
+    </div>
+  }
+</div>

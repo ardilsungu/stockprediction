@@ -1,0 +1,79 @@
+<div class="auth-wrapper">
+  <div class="auth-card">
+    <h1 class="auth-title">Hesap Oluştur</h1>
+
+    <form [formGroup]="form" (ngSubmit)="onSubmit()" novalidate>
+      <div class="form-group">
+        <label for="email">Email</label>
+        <input
+          id="email"
+          type="email"
+          formControlName="email"
+          placeholder="ornek@email.com"
+          [class.invalid]="form.get('email')?.invalid && form.get('email')?.touched"
+        />
+        @if (form.get('email')?.invalid && form.get('email')?.touched) {
+          <span class="field-error">Geçerli bir email girin.</span>
+        }
+      </div>
+
+      <div class="form-group">
+        <label for="username">Kullanıcı Adı</label>
+        <input
+          id="username"
+          type="text"
+          formControlName="username"
+          placeholder="kullaniciadi"
+          [class.invalid]="form.get('username')?.invalid && form.get('username')?.touched"
+        />
+        @if (form.get('username')?.invalid && form.get('username')?.touched) {
+          <span class="field-error">En az 3 karakter olmalıdır.</span>
+        }
+      </div>
+
+      <div class="form-group">
+        <label for="password">Şifre</label>
+        <input
+          id="password"
+          type="password"
+          formControlName="password"
+          placeholder="••••••••"
+          [class.invalid]="form.get('password')?.invalid && form.get('password')?.touched"
+        />
+        @if (form.get('password')?.invalid && form.get('password')?.touched) {
+          <span class="field-error">En az 8 karakter olmalıdır.</span>
+        }
+      </div>
+
+      <div class="form-group">
+        <label for="password_confirm">Şifre Tekrar</label>
+        <input
+          id="password_confirm"
+          type="password"
+          formControlName="password_confirm"
+          placeholder="••••••••"
+          [class.invalid]="form.hasError('passwordMismatch') && form.get('password_confirm')?.touched"
+        />
+        @if (form.hasError('passwordMismatch') && form.get('password_confirm')?.touched) {
+          <span class="field-error">Şifreler eşleşmiyor.</span>
+        }
+      </div>
+
+      @if (errorMessages.length > 0) {
+        <div class="error-banner">
+          @for (msg of errorMessages; track msg) {
+            <p>{{ msg }}</p>
+          }
+        </div>
+      }
+
+      <button type="submit" class="btn-primary" [disabled]="loading">
+        {{ loading ? 'Kaydediliyor...' : 'Kayıt Ol' }}
+      </button>
+    </form>
+
+    <p class="auth-footer">
+      Zaten hesabın var mı? <a routerLink="/login">Giriş yap</a>
+    </p>
+  </div>
+</div>
