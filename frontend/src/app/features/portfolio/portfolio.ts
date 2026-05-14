@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, AfterViewInit, ElementRef, ViewChild } from '@angular/core';
+import { Component, OnDestroy, ElementRef, ViewChild, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { PortfolioService } from '../../core/services/portfolio';
@@ -11,14 +11,16 @@ import { createChart, ColorType, LineSeries } from 'lightweight-charts';
   templateUrl: './portfolio.html',
   styleUrl: './portfolio.scss',
 })
-export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
+export class Portfolio implements OnDestroy {
   @ViewChild('chartContainer') chartContainer!: ElementRef;
 
   form: FormGroup;
-  submitting = false;
-  currentJob: any = null;
-  pollInterval: any = null;
-  errorMessage = '';
+  submitting  = signal(false);
+  currentJob  = signal<any>(null);
+  errorMsg    = signal('');
+  strategies  = computed(() => this.currentJob()?.result?.strategies ?? []);
+
+  private pollInterval: any = null;
   private chart: any = null;
 
   constructor(private fb: FormBuilder, private portfolioService: PortfolioService) {
@@ -30,31 +32,28 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
     });
   }
 
-  ngOnInit(): void {}
-  ngAfterViewInit(): void {}
-
   ngOnDestroy(): void {
     this.clearPoll();
     this.chart?.remove();
   }
 
   startJob(): void {
-    if (this.form.invalid || this.submitting) return;
-    this.submitting = true;
-    this.currentJob = null;
-    this.errorMessage = '';
+    if (this.form.invalid || this.submitting()) return;
+    this.submitting.set(true);
+    this.currentJob.set(null);
+    this.errorMsg.set('');
     this.chart?.remove();
     this.chart = null;
 
     this.portfolioService.createJob(this.form.value).subscribe({
       next: (job) => {
-        this.currentJob = job;
-        this.submitting = false;
+        this.currentJob.set(job);
+        this.submitting.set(false);
         this.startPolling(job.id);
       },
       error: () => {
-        this.errorMessage = 'Job başlatılamadı.';
-        this.submitting = false;
+        this.errorMsg.set('Job başlatılamadı.');
+        this.submitting.set(false);
       },
     });
   }
@@ -63,14 +62,15 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
     const poll = () => {
       this.portfolioService.getJobDetail(jobId).subscribe({
         next: (job) => {
-          this.currentJob = job;
+          this.currentJob.set(job);
           if (job.status === 'completed' || job.status === 'failed') {
             this.clearPoll();
             if (job.status === 'completed') {
-              setTimeout(() => this.renderChart(job.result?.pareto_solutions ?? []), 100);
+              setTimeout(() => this.renderChart(job.result?.pareto_solutions ?? []), 200);
             }
           }
         },
+        error: (err) => console.error('Poll error:', err),
       });
     };
     poll();
@@ -94,25 +94,18 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
       timeScale: { borderColor: '#2a2d3e', visible: false },
     });
 
-    const series = this.chart.addSeries(LineSeries, {
-      color: '#6366f1', lineWidth: 2,
-    });
-
-    const sorted = [...pareto].sort((a, b) => a.cvar - b.cvar);
-    const data = sorted.map((p, i) => ({ time: (i + 1) as any, value: p.expected_return * 365 * 100 }));
+    const series = this.chart.addSeries(LineSeries, { color: '#6366f1', lineWidth: 2 });
+    const sorted = [...pareto].sort((a, b) => (a.cvar ?? 0) - (b.cvar ?? 0));
+    const data = sorted.map((p, i) => ({ time: (i + 1) as any, value: (p.expected_return ?? 0) * 365 * 100 }));
     series.setData(data);
   }
 
-  statusClass(status: string): string {
-    return { pending: 'badge-pending', running: 'badge-running', completed: 'badge-completed', failed: 'badge-failed' }[status] ?? '';
+  statusClass(s: string): string {
+    return ({ pending: 'badge-pending', running: 'badge-running', completed: 'badge-completed', failed: 'badge-failed' } as any)[s] ?? '';
   }
 
-  statusLabel(status: string): string {
-    return { pending: 'Bekliyor', running: 'Çalışıyor...', completed: 'Tamamlandı', failed: 'Hata' }[status] ?? status;
-  }
-
-  get strategies(): any[] {
-    return this.currentJob?.result?.strategies ?? [];
+  statusLabel(s: string): string {
+    return ({ pending: 'Bekliyor', running: 'Çalışıyor...', completed: 'Tamamlandı', failed: 'Hata' } as any)[s] ?? s;
   }
 
   formatPct(v: number): string {

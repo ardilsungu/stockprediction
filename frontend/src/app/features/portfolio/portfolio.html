@@ -25,31 +25,31 @@
           <input type="number" formControlName="pop_size" />
         </div>
       </div>
-      @if (errorMessage) {
-        <div class="error-banner">{{ errorMessage }}</div>
+      @if (errorMsg()) {
+        <div class="error-banner">{{ errorMsg() }}</div>
       }
-      <button type="submit" class="btn-primary" [disabled]="submitting">
-        {{ submitting ? 'Başlatılıyor...' : 'Optimizasyonu Başlat' }}
+      <button type="submit" class="btn-primary" [disabled]="submitting()">
+        {{ submitting() ? 'Başlatılıyor...' : 'Optimizasyonu Başlat' }}
       </button>
     </form>
   </div>
 
-  @if (currentJob) {
+  @if (currentJob()) {
     <div class="card mb-24">
       <div class="job-status-row">
         <h2 class="card-title" style="margin:0">Job Durumu</h2>
-        <span class="badge {{ statusClass(currentJob.status) }}">
-          {{ statusLabel(currentJob.status) }}
+        <span class="badge {{ statusClass(currentJob()?.status) }}">
+          {{ statusLabel(currentJob()?.status) }}
         </span>
       </div>
-      <p class="muted mt-8">ID: {{ currentJob.id }}</p>
-      @if (currentJob.status === 'running') {
+      <p class="muted mt-8">ID: {{ currentJob()?.id }}</p>
+      @if (currentJob()?.status === 'running') {
         <div class="progress-bar"><div class="progress-fill"></div></div>
       }
     </div>
   }
 
-  @if (strategies.length > 0) {
+  @if (strategies().length > 0) {
     <div class="card mb-24">
       <h2 class="card-title">Strateji Sonuçları</h2>
       <div class="table-wrapper">
@@ -67,7 +67,7 @@
             </tr>
           </thead>
           <tbody>
-            @for (s of strategies; track s.key) {
+            @for (s of strategies(); track s.key) {
               <tr>
                 <td class="strategy-name">{{ s.name }}</td>
                 <td [class.positive]="s.annual_return > 0" [class.negative]="s.annual_return < 0">
