@@ -116,11 +116,10 @@ def run_portfolio_optimization(self, job_id, params):
         )
 
         # ── 7. Sonuçları serialize et ve kaydet ─────────────────────────────
-        strategies_list = []
         import numpy as np
+        strategies_dict = {}
         for key, s in strategies.items():
-            strategies_list.append({
-                "key":           key,
+            strategies_dict[key] = {
                 "name":          s["name"],
                 "annual_return": round(float(s["annual_return"]), 6),
                 "annual_vol":    round(float(s["annual_vol"]), 6),
@@ -132,7 +131,7 @@ def run_portfolio_optimization(self, job_id, params):
                 "cvar_annual":   round(float(s["cvar_annual"]), 6),
                 "max_drawdown":  round(float(s["max_drawdown"]), 6),
                 "n_active":      int(s["n_active"]),
-            })
+            }
 
         weights_dict = {}
         for key, s in strategies.items():
@@ -148,7 +147,7 @@ def run_portfolio_optimization(self, job_id, params):
             job=job,
             surviving_assets=surviving,
             pareto_solutions=pareto_list,
-            strategies=strategies_list,
+            strategies=strategies_dict,
             weights=weights_dict,
         )
 

@@ -24,7 +24,7 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
   constructor(private fb: FormBuilder, private portfolioService: PortfolioService) {
     this.form = this.fb.group({
       n_coins:      [50,  [Validators.required, Validators.min(10), Validators.max(100)]],
-      lookback_days:[365, [Validators.required, Validators.min(90)]],
+      lookback_days:[365, [Validators.required, Validators.min(250)]],
       n_gen:        [100, [Validators.required, Validators.min(20)]],
       pop_size:     [100, [Validators.required, Validators.min(20)]],
     });
