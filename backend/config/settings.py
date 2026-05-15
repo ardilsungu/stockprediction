@@ -87,8 +87,8 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 AUTH_USER_MODEL = 'users.User'
 
-# CORS
-CORS_ALLOWED_ORIGINS = ["http://localhost:4200"]
+# CORS — dev: tüm originlere izin ver; prod'da CORS_ALLOWED_ORIGINS listesiyle değiştir
+CORS_ALLOW_ALL_ORIGINS = DEBUG
 CORS_ALLOW_CREDENTIALS = True
 
 # Django REST Framework
