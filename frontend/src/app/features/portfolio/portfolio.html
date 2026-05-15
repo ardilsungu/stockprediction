@@ -34,22 +34,22 @@
     </form>
   </div>
 
-  @if (currentJob) {
+  @if (currentJob(); as job) {
     <div class="card mb-24">
       <div class="job-status-row">
         <h2 class="card-title" style="margin:0">Job Durumu</h2>
-        <span class="badge {{ statusClass(currentJob.status) }}">
-          {{ statusLabel(currentJob.status) }}
+        <span class="badge {{ statusClass(job.status) }}">
+          {{ statusLabel(job.status) }}
         </span>
       </div>
-      <p class="muted mt-8">ID: {{ currentJob.id }}</p>
-      @if (currentJob.status === 'running') {
+      <p class="muted mt-8">ID: {{ job.id }}</p>
+      @if (job.status === 'running') {
         <div class="progress-bar"><div class="progress-fill"></div></div>
       }
     </div>
   }
 
-  @if (strategies.length > 0) {
+  @if (strategies().length > 0) {
     <div class="card mb-24">
       <h2 class="card-title">Strateji Sonuçları</h2>
       <div class="table-wrapper">

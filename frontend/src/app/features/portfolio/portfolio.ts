@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, AfterViewInit, ElementRef, ViewChild } from '@angular/core';
+import { Component, OnInit, OnDestroy, AfterViewInit, ElementRef, ViewChild, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { PortfolioService } from '../../core/services/portfolio';
@@ -16,7 +16,8 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
 
   form: FormGroup;
   submitting = false;
-  currentJob: any = null;
+  currentJob = signal<any>(null);
+  strategies = computed<any[]>(() => this.currentJob()?.result?.strategies ?? []);
   pollInterval: any = null;
   errorMessage = '';
   private chart: any = null;
@@ -41,14 +42,14 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
   startJob(): void {
     if (this.form.invalid || this.submitting) return;
     this.submitting = true;
-    this.currentJob = null;
+    this.currentJob.set(null);
     this.errorMessage = '';
     this.chart?.remove();
     this.chart = null;
 
     this.portfolioService.createJob(this.form.value).subscribe({
       next: (job) => {
-        this.currentJob = job;
+        this.currentJob.set(job);
         this.submitting = false;
         this.startPolling(job.id);
       },
@@ -63,7 +64,7 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
     this.pollInterval = setInterval(() => {
       this.portfolioService.getJobDetail(jobId).subscribe({
         next: (job) => {
-          this.currentJob = job;
+          this.currentJob.set(job);
           if (job.status === 'completed' || job.status === 'failed') {
             this.clearPoll();
             if (job.status === 'completed') {
@@ -107,10 +108,6 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
 
   statusLabel(status: string): string {
     return { pending: 'Bekliyor', running: 'Çalışıyor...', completed: 'Tamamlandı', failed: 'Hata' }[status] ?? status;
-  }
-
-  get strategies(): any[] {
-    return this.currentJob?.result?.strategies ?? [];
   }
 
   formatPct(v: number): string {
