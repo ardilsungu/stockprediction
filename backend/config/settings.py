@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from decouple import config
 
@@ -68,6 +69,15 @@ DATABASES = {
         "PORT": config('DB_PORT'),
     }
 }
+
+# Test ortamı: PostgreSQL/Docker olmadan da pytest çalışsın
+if os.environ.get('PYTEST_CURRENT_TEST') or 'pytest' in os.environ.get('_', ''):
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': ':memory:',
+        }
+    }
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
