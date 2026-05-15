@@ -2,7 +2,7 @@ import { Component, OnInit, OnDestroy, AfterViewInit, ElementRef, ViewChild, sig
 import { CommonModule } from '@angular/common';
 import { ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { PortfolioService } from '../../core/services/portfolio';
-import { createChart, ColorType } from 'lightweight-charts';
+import { createChart, ColorType, LineSeries } from 'lightweight-charts';
 
 @Component({
   selector: 'app-portfolio',
@@ -93,7 +93,7 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
       timeScale: { borderColor: '#2a2d3e', visible: false },
     });
 
-    const series = this.chart.addLineSeries({
+    const series = this.chart.addSeries(LineSeries, {
       color: '#6366f1', lineWidth: 2, pointMarkersVisible: true,
     });
 
