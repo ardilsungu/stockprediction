@@ -98,14 +98,13 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 AUTH_USER_MODEL = 'users.User'
 
-# CORS
-if DEBUG:
-    CORS_ALLOW_ALL_ORIGINS = True
-else:
-    CORS_ALLOWED_ORIGINS = [
-        "http://localhost:4200",
-        "http://localhost:4201",
-    ]
+# CORS — credentials açıkken wildcard origin kullanma (browser spec yasaklar, JWT sızdırma riski)
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:4200",
+    "http://localhost:4201",
+    "http://127.0.0.1:4200",
+    "http://127.0.0.1:4201",
+]
 CORS_ALLOW_CREDENTIALS = True
 
 # Django REST Framework
