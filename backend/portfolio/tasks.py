@@ -23,6 +23,20 @@ def _mark_failed(job_id):
         pass
 
 
+def _detect_data_source() -> str:
+    """CoinGecko'ya hızlı bir /ping atıp 'coingecko' veya 'fallback' döndürür.
+
+    Bu, run_portfolio_optimization sırasında fetch_top_coins'in
+    gerçekten API'yi mi yoksa hardcoded fallback listesini mi
+    kullanacağını yaklaşık olarak teşhis etmek için kullanılır.
+    """
+    try:
+        resp = requests.get("https://api.coingecko.com/api/v3/ping", timeout=5)
+        return 'coingecko' if resp.status_code == 200 else 'fallback'
+    except Exception:
+        return 'fallback'
+
+
 
 def _build_pareto_list(pareto_F, pareto_weights, tickers: list) -> list:
     """Pareto cephesini JSON-safe liste olarak döndürür."""
@@ -65,11 +79,31 @@ def run_portfolio_optimization(self, job_id, params):
         min_assets   = params.get('min_assets', 5)
         max_assets   = params.get('max_assets', 20)
 
-        end_date   = datetime.today().strftime('%Y-%m-%d')
-        start_date = (datetime.today() - timedelta(days=lookback + YFINANCE_FETCH_BUFFER_DAYS)).strftime('%Y-%m-%d')
+        # Pencereyi job.created_at'e göre sabitle — datetime.today() her
+        # çağrıda farklı bir saate denk geldiği için aynı params'la yapılan
+        # ardışık run'larda farklı veri penceresi oluşuyordu. end_date'i bir
+        # gün geriye çekiyoruz, böylece yfinance'in henüz kapanmamış olan
+        # günlük çubuğu (partial bar) da pencere dışında kalır.
+        end_date_dt   = job.created_at.date() - timedelta(days=1)
+        start_date_dt = end_date_dt - timedelta(days=lookback + YFINANCE_FETCH_BUFFER_DAYS)
+        end_date      = end_date_dt.strftime('%Y-%m-%d')
+        start_date    = start_date_dt.strftime('%Y-%m-%d')
+
+        # CoinGecko'ya erişilebiliyor mu? (fallback listesi devreye girer mi?)
+        data_source = _detect_data_source()
+
+        # Reproducibility metadata'sını erkenden yaz: optimizer patlasa bile
+        # hangi pencere ve veri kaynağıyla denendiğini öğrenebilelim.
+        job.params = {
+            **job.params,
+            'actual_start_date': start_date,
+            'actual_end_date':   end_date,
+            'data_source':       data_source,
+        }
+        job.save()
 
         # ── 1. CoinGecko: coin listesi ──────────────────────────────────────
-        logger.info("Step 1/5: Fetching top coins from CoinGecko...")
+        logger.info("Step 1/5: Fetching top coins from CoinGecko (source=%s)...", data_source)
         coins_df = fetch_top_coins(n_target=n_coins, sort_by='market_cap')
         symbols  = coins_df['symbol'].str.upper().tolist()
         logger.info(f"  {len(symbols)} coin çekildi")
@@ -93,6 +127,15 @@ def run_portfolio_optimization(self, job_id, params):
         # ── 4. Winsorization ────────────────────────────────────────────────
         logger.info("Step 4/5: Winsorizing returns...")
         returns_df = winsorize_returns(returns_df, verbose=False)
+
+        # Optimizer'a giren gerçek coin listesi (sanity filter sonrası).
+        # NSGA-III ağırlık vektörleri bu sıralamaya göre.
+        actual_tickers = returns_df.columns.tolist()
+        job.params = {
+            **job.params,
+            'actual_tickers': actual_tickers,
+        }
+        job.save()
 
         # ── 5. NSGA-III optimizasyon ────────────────────────────────────────
         logger.info("Step 5/5: Running NSGA-III optimization...")
