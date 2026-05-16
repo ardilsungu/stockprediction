@@ -6,6 +6,7 @@
 .card { background: #1a1d2e; border: 1px solid #2a2d3e; border-radius: 12px; padding: 24px; }
 .card-title { color: #e2e8f0; font-size: 1.1rem; font-weight: 600; margin: 0 0 16px; }
 .mb-24 { margin-bottom: 24px; }
+.mb-12 { margin-bottom: 12px; }
 .mt-8  { margin-top: 8px; }
 .muted { color: #64748b; font-size: 0.85rem; margin: 0; }
 
@@ -106,8 +107,16 @@
     padding: 10px 12px;
     border-bottom: 1px solid #1e2235;
   }
+  tbody tr { cursor: pointer; transition: background 0.15s; }
   tr:last-child td { border-bottom: none; }
   tr:hover td { background: rgba(255,255,255,0.02); }
+  tr.selected td {
+    background: rgba(99,102,241,0.10);
+    border-bottom-color: rgba(99,102,241,0.30);
+  }
+  tr.selected td:first-child {
+    box-shadow: inset 3px 0 0 #6366f1;
+  }
 }
 
 .strategy-name { color: #c7d2fe; font-weight: 600; }
@@ -116,3 +125,38 @@
 .center   { text-align: center; }
 
 .chart-container { width: 100%; height: 300px; }
+
+.weights-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.weight-row {
+  display: grid;
+  grid-template-columns: 72px 1fr 72px;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.875rem;
+}
+.weight-ticker {
+  color: #c7d2fe;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.weight-bar {
+  height: 8px;
+  background: #1e2235;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.weight-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4f46e5, #6366f1);
+  border-radius: 4px;
+  transition: width 0.2s ease;
+}
+.weight-pct {
+  color: #94a3b8;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

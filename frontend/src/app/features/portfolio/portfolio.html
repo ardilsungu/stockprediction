@@ -52,6 +52,7 @@
   @if (strategies().length > 0) {
     <div class="card mb-24">
       <h2 class="card-title">Strateji Sonuçları</h2>
+      <p class="muted mb-12">Detaylı portföy ağırlıklarını görmek için bir stratejiye tıklayın.</p>
       <div class="table-wrapper">
         <table class="result-table">
           <thead>
@@ -67,19 +68,20 @@
             </tr>
           </thead>
           <tbody>
-            @for (s of strategies(); track (s.key ?? s.name)) {
-              <tr>
+            @for (s of strategies(); track s.key) {
+              <tr (click)="selectStrategy(s.key)"
+                  [class.selected]="selectedStrategy() === s.key">
                 <td class="strategy-name">{{ s.name }}</td>
-                <td [class.positive]="(s.annual_return ?? s.expected_return) > 0"
-                    [class.negative]="(s.annual_return ?? s.expected_return) < 0">
-                  {{ formatPct(s.annual_return ?? s.expected_return) }}
+                <td [class.positive]="s.annual_return > 0"
+                    [class.negative]="s.annual_return < 0">
+                  {{ formatPct(s.annual_return) }}
                 </td>
-                <td>{{ formatPct(s.annual_vol ?? s.volatility) }}</td>
+                <td>{{ formatPct(s.annual_vol) }}</td>
                 <td>{{ s.sharpe != null ? s.sharpe.toFixed(3) : '—' }}</td>
                 <td>{{ s.sortino != null ? s.sortino.toFixed(3) : '—' }}</td>
-                <td>{{ s.cvar_annual != null ? formatPct(s.cvar_annual) : '—' }}</td>
-                <td>{{ s.max_drawdown != null ? formatPct(s.max_drawdown) : '—' }}</td>
-                <td class="center">{{ s.n_active ?? '—' }}</td>
+                <td>{{ formatPct(s.cvar_annual) }}</td>
+                <td>{{ formatPct(s.max_drawdown) }}</td>
+                <td class="center">{{ s.n_active }}</td>
               </tr>
             }
           </tbody>
@@ -87,9 +89,29 @@
       </div>
     </div>
 
-    <div class="card">
+    <div class="card mb-24">
       <h2 class="card-title">Pareto Frontier (CVaR sıralı — Yıllık Getiri %)</h2>
       <div #chartContainer class="chart-container"></div>
     </div>
+
+    @if (selectedStrategy() && selectedWeights().length > 0) {
+      <div class="card">
+        <h2 class="card-title">
+          Portföy Ağırlıkları —
+          <span class="strategy-name">{{ selectedStrategyName() }}</span>
+        </h2>
+        <div class="weights-grid">
+          @for (w of selectedWeights(); track w.ticker) {
+            <div class="weight-row">
+              <span class="weight-ticker">{{ w.ticker }}</span>
+              <div class="weight-bar">
+                <div class="weight-fill" [style.width.%]="w.weight * 100"></div>
+              </div>
+              <span class="weight-pct">{{ formatPct(w.weight) }}</span>
+            </div>
+          }
+        </div>
+      </div>
+    }
   }
 </div>
