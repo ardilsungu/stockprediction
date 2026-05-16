@@ -6,6 +6,12 @@ from celery.utils.log import get_task_logger
 
 logger = get_task_logger(__name__)
 
+# yFinance bazı günleri (hafta sonu, tatil, ilk işlem günü öncesi) atlar.
+# `lookback_days` kadar veri elde edebilmek için talep aralığını bir miktar
+# geriye doğru genişletiyoruz; bu sayede sanity filter sonrası yine de
+# istenen kadar günlük getiri kalıyor.
+YFINANCE_FETCH_BUFFER_DAYS = 30
+
 
 def _mark_failed(job_id):
     from .models import PortfolioJob
@@ -16,21 +22,6 @@ def _mark_failed(job_id):
     except Exception:
         pass
 
-
-
-def _build_weights_dict(strategies: dict, tickers: list) -> dict:
-    """Her strateji için {ticker: weight} sözlüğü döndürür."""
-    import numpy as np
-
-    result = {}
-    for key, s in strategies.items():
-        w = s["weights"]
-        result[key] = {
-            ticker: round(float(weight), 6)
-            for ticker, weight in zip(tickers, w)
-            if weight > 0.001  # sıfıra yakın ağırlıkları atla
-        }
-    return result
 
 
 def _build_pareto_list(pareto_F, pareto_weights, tickers: list) -> list:
@@ -75,7 +66,7 @@ def run_portfolio_optimization(self, job_id, params):
         max_assets   = params.get('max_assets', 20)
 
         end_date   = datetime.today().strftime('%Y-%m-%d')
-        start_date = (datetime.today() - timedelta(days=lookback + 30)).strftime('%Y-%m-%d')
+        start_date = (datetime.today() - timedelta(days=lookback + YFINANCE_FETCH_BUFFER_DAYS)).strftime('%Y-%m-%d')
 
         # ── 1. CoinGecko: coin listesi ──────────────────────────────────────
         logger.info("Step 1/5: Fetching top coins from CoinGecko...")

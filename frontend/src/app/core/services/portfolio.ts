@@ -2,6 +2,11 @@ import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { environment } from '../../../environments/environment';
+import { PortfolioJob, PortfolioJobDetail, PortfolioJobParams } from '../models';
+
+interface DeleteJobResponse {
+  message: string;
+}
 
 @Injectable({ providedIn: 'root' })
 export class PortfolioService {
@@ -9,19 +14,19 @@ export class PortfolioService {
 
   constructor(private http: HttpClient) {}
 
-  getJobs(): Observable<any[]> {
-    return this.http.get<any[]>(`${this.base}/jobs/`);
+  getJobs(): Observable<PortfolioJob[]> {
+    return this.http.get<PortfolioJob[]>(`${this.base}/jobs/`);
   }
 
-  createJob(params: Record<string, any>): Observable<any> {
-    return this.http.post<any>(`${this.base}/jobs/`, { params });
+  createJob(params: PortfolioJobParams): Observable<PortfolioJob> {
+    return this.http.post<PortfolioJob>(`${this.base}/jobs/`, { params });
   }
 
-  getJobDetail(id: string): Observable<any> {
-    return this.http.get<any>(`${this.base}/jobs/${id}/`);
+  getJobDetail(id: string): Observable<PortfolioJobDetail> {
+    return this.http.get<PortfolioJobDetail>(`${this.base}/jobs/${id}/`);
   }
 
-  deleteJob(id: string): Observable<any> {
-    return this.http.delete<any>(`${this.base}/jobs/${id}/delete/`);
+  deleteJob(id: string): Observable<DeleteJobResponse> {
+    return this.http.delete<DeleteJobResponse>(`${this.base}/jobs/${id}/delete/`);
   }
 }
