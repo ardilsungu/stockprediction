@@ -1,6 +1,7 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { RouterLink } from '@angular/router';
+import { NavigationEnd, Router, RouterLink } from '@angular/router';
+import { Subscription, filter, skip } from 'rxjs';
 import { AuthService } from '../../core/services/auth';
 import { PortfolioService } from '../../core/services/portfolio';
 
@@ -11,17 +12,39 @@ import { PortfolioService } from '../../core/services/portfolio';
   templateUrl: './dashboard.html',
   styleUrl: './dashboard.scss',
 })
-export class Dashboard implements OnInit {
+export class Dashboard implements OnInit, OnDestroy {
   profile: any = null;
   recentJobs: any[] = [];
   loading = true;
+  private navSub?: Subscription;
 
   constructor(
     private authService: AuthService,
     private portfolioService: PortfolioService,
+    private router: Router,
   ) {}
 
   ngOnInit(): void {
+    this.loadData();
+
+    this.navSub = this.router.events
+      .pipe(
+        filter((e): e is NavigationEnd => e instanceof NavigationEnd),
+        skip(1),
+      )
+      .subscribe((e) => {
+        if (e.urlAfterRedirects.startsWith('/dashboard')) {
+          this.loadData();
+        }
+      });
+  }
+
+  ngOnDestroy(): void {
+    this.navSub?.unsubscribe();
+  }
+
+  private loadData(): void {
+    this.loading = true;
     this.authService.getProfile().subscribe({
       next: (p) => (this.profile = p),
     });
