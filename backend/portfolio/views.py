@@ -15,20 +15,14 @@ def job_list(request):
         serializer = PortfolioJobSerializer(jobs, many=True)
         return Response(serializer.data)
 
-    params = request.data.get('params', {})
-    if params.get('lookback_days', 365) < 250:
-        return Response(
-            {'error': 'lookback_days en az 250 olmalıdır.'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
+    serializer = PortfolioJobSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
     job = PortfolioJob.objects.create(
         user=request.user,
-        params=params,
+        params=serializer.validated_data.get('params', {}),
     )
     run_portfolio_optimization.delay(str(job.id), job.params)
-    serializer = PortfolioJobSerializer(job)
-    return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return Response(PortfolioJobSerializer(job).data, status=status.HTTP_201_CREATED)
 
 
 @api_view(['GET'])
