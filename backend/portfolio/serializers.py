@@ -10,7 +10,7 @@ class PortfolioResultSerializer(serializers.ModelSerializer):
 
 PARAM_RANGES = {
     'lookback_days': (250, 750),
-    'n_coins': (10, 100),
+    'n_coins': (20, 100),
     'n_gen': (20, 500),
     'pop_size': (20, 500),
     'max_weight': (0.01, 1.0),
