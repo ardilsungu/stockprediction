@@ -2,6 +2,7 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from config.celery import app as celery_app
 from .models import PortfolioJob
 from .serializers import PortfolioJobSerializer, PortfolioJobDetailSerializer
 from .tasks import run_portfolio_optimization
@@ -41,6 +42,11 @@ def job_detail(request, pk):
 def job_delete(request, pk):
     try:
         job = PortfolioJob.objects.get(id=pk, user=request.user)
+        if job.celery_task_id and job.status in ('pending', 'running'):
+            try:
+                celery_app.control.revoke(job.celery_task_id, terminate=True)
+            except Exception:
+                pass
         job.delete()
         return Response({'message': 'Job silindi.'})
     except PortfolioJob.DoesNotExist:
