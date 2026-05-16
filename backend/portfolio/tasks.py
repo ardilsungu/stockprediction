@@ -1,8 +1,20 @@
 from datetime import datetime, timedelta
+import requests
+import redis
 from celery import shared_task
 from celery.utils.log import get_task_logger
 
 logger = get_task_logger(__name__)
+
+
+def _mark_failed(job_id):
+    from .models import PortfolioJob
+    try:
+        job = PortfolioJob.objects.get(id=job_id)
+        job.status = 'failed'
+        job.save()
+    except Exception:
+        pass
 
 
 
@@ -161,12 +173,20 @@ def run_portfolio_optimization(self, job_id, params):
         logger.error(f"Job not found: job_id={job_id}")
         raise
 
+    except (
+        requests.exceptions.ConnectionError,
+        requests.exceptions.Timeout,
+        requests.exceptions.HTTPError,
+        redis.exceptions.ConnectionError,
+    ) as exc:
+        logger.warning(f"Transient error, retrying: job_id={job_id}, error={exc}")
+        _mark_failed(job_id)
+        raise self.retry(exc=exc, countdown=5, max_retries=3)
+
+    except (ValueError, KeyError, TypeError) as exc:
+        logger.error(f"Non-retryable error: job_id={job_id}, error={exc}")
+        _mark_failed(job_id)
+
     except Exception as exc:
-        logger.error(f"Portfolio optimization failed: job_id={job_id}, error={exc}")
-        try:
-            job = PortfolioJob.objects.get(id=job_id)
-            job.status = 'failed'
-            job.save()
-        except Exception:
-            pass
-        raise self.retry(exc=exc)
+        logger.error(f"Unexpected error: job_id={job_id}, error={exc}")
+        _mark_failed(job_id)
