@@ -61,19 +61,22 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
   }
 
   private startPolling(jobId: string): void {
-    this.pollInterval = setInterval(() => {
-      this.portfolioService.getJobDetail(jobId).subscribe({
-        next: (job) => {
-          this.currentJob.set(job);
-          if (job.status === 'completed' || job.status === 'failed') {
-            this.clearPoll();
-            if (job.status === 'completed') {
-              setTimeout(() => this.renderChart(job.result?.pareto_solutions ?? []), 100);
-            }
+    this.pollJob(jobId);
+    this.pollInterval = setInterval(() => this.pollJob(jobId), 3000);
+  }
+
+  private pollJob(jobId: string): void {
+    this.portfolioService.getJobDetail(jobId).subscribe({
+      next: (job) => {
+        this.currentJob.set(job);
+        if (job.status === 'completed' || job.status === 'failed') {
+          this.clearPoll();
+          if (job.status === 'completed') {
+            setTimeout(() => this.renderChart(job.result?.pareto_solutions ?? []), 100);
           }
-        },
-      });
-    }, 10000);
+        }
+      },
+    });
   }
 
   private clearPoll(): void {
