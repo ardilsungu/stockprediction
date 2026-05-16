@@ -1,24 +1,41 @@
 from datetime import datetime, timedelta
+import requests
+import redis
 from celery import shared_task
 from celery.utils.log import get_task_logger
 
 logger = get_task_logger(__name__)
 
+# yFinance bazı günleri (hafta sonu, tatil, ilk işlem günü öncesi) atlar.
+# `lookback_days` kadar veri elde edebilmek için talep aralığını bir miktar
+# geriye doğru genişletiyoruz; bu sayede sanity filter sonrası yine de
+# istenen kadar günlük getiri kalıyor.
+YFINANCE_FETCH_BUFFER_DAYS = 30
 
 
-def _build_weights_dict(strategies: dict, tickers: list) -> dict:
-    """Her strateji için {ticker: weight} sözlüğü döndürür."""
-    import numpy as np
+def _mark_failed(job_id):
+    from .models import PortfolioJob
+    try:
+        job = PortfolioJob.objects.get(id=job_id)
+        job.status = 'failed'
+        job.save()
+    except Exception:
+        pass
 
-    result = {}
-    for key, s in strategies.items():
-        w = s["weights"]
-        result[key] = {
-            ticker: round(float(weight), 6)
-            for ticker, weight in zip(tickers, w)
-            if weight > 0.001  # sıfıra yakın ağırlıkları atla
-        }
-    return result
+
+def _detect_data_source() -> str:
+    """CoinGecko'ya hızlı bir /ping atıp 'coingecko' veya 'fallback' döndürür.
+
+    Bu, run_portfolio_optimization sırasında fetch_top_coins'in
+    gerçekten API'yi mi yoksa hardcoded fallback listesini mi
+    kullanacağını yaklaşık olarak teşhis etmek için kullanılır.
+    """
+    try:
+        resp = requests.get("https://api.coingecko.com/api/v3/ping", timeout=5)
+        return 'coingecko' if resp.status_code == 200 else 'fallback'
+    except Exception:
+        return 'fallback'
+
 
 
 def _build_pareto_list(pareto_F, pareto_weights, tickers: list) -> list:
@@ -62,11 +79,31 @@ def run_portfolio_optimization(self, job_id, params):
         min_assets   = params.get('min_assets', 5)
         max_assets   = params.get('max_assets', 20)
 
-        end_date   = datetime.today().strftime('%Y-%m-%d')
-        start_date = (datetime.today() - timedelta(days=lookback + 30)).strftime('%Y-%m-%d')
+        # Pencereyi job.created_at'e göre sabitle — datetime.today() her
+        # çağrıda farklı bir saate denk geldiği için aynı params'la yapılan
+        # ardışık run'larda farklı veri penceresi oluşuyordu. end_date'i bir
+        # gün geriye çekiyoruz, böylece yfinance'in henüz kapanmamış olan
+        # günlük çubuğu (partial bar) da pencere dışında kalır.
+        end_date_dt   = job.created_at.date() - timedelta(days=1)
+        start_date_dt = end_date_dt - timedelta(days=lookback + YFINANCE_FETCH_BUFFER_DAYS)
+        end_date      = end_date_dt.strftime('%Y-%m-%d')
+        start_date    = start_date_dt.strftime('%Y-%m-%d')
+
+        # CoinGecko'ya erişilebiliyor mu? (fallback listesi devreye girer mi?)
+        data_source = _detect_data_source()
+
+        # Reproducibility metadata'sını erkenden yaz: optimizer patlasa bile
+        # hangi pencere ve veri kaynağıyla denendiğini öğrenebilelim.
+        job.params = {
+            **job.params,
+            'actual_start_date': start_date,
+            'actual_end_date':   end_date,
+            'data_source':       data_source,
+        }
+        job.save()
 
         # ── 1. CoinGecko: coin listesi ──────────────────────────────────────
-        logger.info("Step 1/5: Fetching top coins from CoinGecko...")
+        logger.info("Step 1/5: Fetching top coins from CoinGecko (source=%s)...", data_source)
         coins_df = fetch_top_coins(n_target=n_coins, sort_by='market_cap')
         symbols  = coins_df['symbol'].str.upper().tolist()
         logger.info(f"  {len(symbols)} coin çekildi")
@@ -90,6 +127,15 @@ def run_portfolio_optimization(self, job_id, params):
         # ── 4. Winsorization ────────────────────────────────────────────────
         logger.info("Step 4/5: Winsorizing returns...")
         returns_df = winsorize_returns(returns_df, verbose=False)
+
+        # Optimizer'a giren gerçek coin listesi (sanity filter sonrası).
+        # NSGA-III ağırlık vektörleri bu sıralamaya göre.
+        actual_tickers = returns_df.columns.tolist()
+        job.params = {
+            **job.params,
+            'actual_tickers': actual_tickers,
+        }
+        job.save()
 
         # ── 5. NSGA-III optimizasyon ────────────────────────────────────────
         logger.info("Step 5/5: Running NSGA-III optimization...")
@@ -116,11 +162,10 @@ def run_portfolio_optimization(self, job_id, params):
         )
 
         # ── 7. Sonuçları serialize et ve kaydet ─────────────────────────────
-        strategies_list = []
         import numpy as np
+        strategies_dict = {}
         for key, s in strategies.items():
-            strategies_list.append({
-                "key":           key,
+            strategies_dict[key] = {
                 "name":          s["name"],
                 "annual_return": round(float(s["annual_return"]), 6),
                 "annual_vol":    round(float(s["annual_vol"]), 6),
@@ -132,7 +177,7 @@ def run_portfolio_optimization(self, job_id, params):
                 "cvar_annual":   round(float(s["cvar_annual"]), 6),
                 "max_drawdown":  round(float(s["max_drawdown"]), 6),
                 "n_active":      int(s["n_active"]),
-            })
+            }
 
         weights_dict = {}
         for key, s in strategies.items():
@@ -148,7 +193,7 @@ def run_portfolio_optimization(self, job_id, params):
             job=job,
             surviving_assets=surviving,
             pareto_solutions=pareto_list,
-            strategies=strategies_list,
+            strategies=strategies_dict,
             weights=weights_dict,
         )
 
@@ -162,12 +207,20 @@ def run_portfolio_optimization(self, job_id, params):
         logger.error(f"Job not found: job_id={job_id}")
         raise
 
+    except (
+        requests.exceptions.ConnectionError,
+        requests.exceptions.Timeout,
+        requests.exceptions.HTTPError,
+        redis.exceptions.ConnectionError,
+    ) as exc:
+        logger.warning(f"Transient error, retrying: job_id={job_id}, error={exc}")
+        _mark_failed(job_id)
+        raise self.retry(exc=exc, countdown=5, max_retries=3)
+
+    except (ValueError, KeyError, TypeError) as exc:
+        logger.error(f"Non-retryable error: job_id={job_id}, error={exc}")
+        _mark_failed(job_id)
+
     except Exception as exc:
-        logger.error(f"Portfolio optimization failed: job_id={job_id}, error={exc}")
-        try:
-            job = PortfolioJob.objects.get(id=job_id)
-            job.status = 'failed'
-            job.save()
-        except Exception:
-            pass
-        raise self.retry(exc=exc)
+        logger.error(f"Unexpected error: job_id={job_id}, error={exc}")
+        _mark_failed(job_id)

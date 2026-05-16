@@ -41,9 +41,10 @@ def existing_job(user):
 @pytest.mark.django_db
 class TestPortfolioJob:
     def test_create_job_authenticated(self, auth_client):
-        response = auth_client.post(reverse('job_list'), {
-            'params': {'assets': ['BTC', 'ETH', 'SOL'], 'risk_tolerance': 'medium'},
-        }, format='json')
+        with patch('portfolio.tasks.run_portfolio_optimization.delay'):
+            response = auth_client.post(reverse('job_list'), {
+                'params': {'assets': ['BTC', 'ETH', 'SOL'], 'risk_tolerance': 'medium'},
+            }, format='json')
         assert response.status_code == 201
         assert response.data['status'] == 'pending'
         assert 'id' in response.data
@@ -86,7 +87,8 @@ class TestPortfolioJob:
         assert response.status_code == 404
 
     def test_job_default_params(self, auth_client):
-        response = auth_client.post(reverse('job_list'), {}, format='json')
+        with patch('portfolio.tasks.run_portfolio_optimization.delay'):
+            response = auth_client.post(reverse('job_list'), {}, format='json')
         assert response.status_code == 201
         job = PortfolioJob.objects.get(id=response.data['id'])
         assert isinstance(job.params, dict)

@@ -1,11 +1,23 @@
+import logging
+
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import TokenError
 from django.contrib.auth import authenticate
 from .models import AuditLog
 from .serializers import RegisterSerializer, LoginSerializer, UserProfileSerializer
+
+logger = logging.getLogger(__name__)
+
+
+def get_client_ip(request):
+    forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
+    if forwarded:
+        return forwarded.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR')
 
 
 def _log(request, user, action):
@@ -13,7 +25,7 @@ def _log(request, user, action):
         user=user,
         action=action,
         detail={'email': user.email},
-        ip_address=request.META.get('REMOTE_ADDR'),
+        ip_address=get_client_ip(request),
     )
 
 
@@ -58,12 +70,29 @@ def login(request):
 def logout(request):
     try:
         refresh_token = request.data['refresh']
+    except KeyError:
+        return Response(
+            {'error': "'refresh' alanı zorunludur."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
         token = RefreshToken(refresh_token)
         token.blacklist()
-        _log(request, request.user, 'logout')
-        return Response({'message': 'Çıkış başarılı.'})
-    except Exception:
-        return Response({'error': 'Geçersiz token.'}, status=status.HTTP_400_BAD_REQUEST)
+    except TokenError:
+        return Response(
+            {'error': 'Refresh token geçersiz veya süresi dolmuş.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    except Exception as exc:
+        logger.exception('Logout sırasında beklenmedik hata: %s', exc)
+        return Response(
+            {'error': 'Çıkış işlemi tamamlanamadı.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    _log(request, request.user, 'logout')
+    return Response({'message': 'Çıkış başarılı.'})
 
 
 @api_view(['GET'])

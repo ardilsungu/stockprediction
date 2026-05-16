@@ -32,7 +32,7 @@ class PortfolioResult(models.Model):
     job = models.OneToOneField(PortfolioJob, on_delete=models.CASCADE, related_name='result')
     surviving_assets = models.JSONField(default=list)
     pareto_solutions = models.JSONField(default=list)
-    strategies = models.JSONField(default=list)
+    strategies = models.JSONField(default=dict)
     weights = models.JSONField(default=dict)
     created_at = models.DateTimeField(auto_now_add=True)
 

@@ -901,66 +901,88 @@ def select_portfolio_strategies(
         3. Min CVaR     — en güvenli (tail-risk minimum)
         4. Max Return   — en agresif
         5. Balanced     — ideal noktaya en yakın (ortalama)
+
+    Tie-break: Her strateji Pareto cephesinden FARKLI bir nokta seçer; daha
+    önce sahiplenilen indeksler maskelenir. Bu, küçük cephelerde (ör. uç
+    noktanın hem max_return hem max_sortino için optimal olduğu durumda)
+    iki stratejinin aynı portföye düşmesini önler. Cephede 5'ten az nokta
+    varsa zorunlu paylaşım olur (global best'e geri düşülür).
+
+    Önceliklendirme: sharpe → min_cvar → max_return → max_sortino → balanced.
+    Çakışma durumunda sortino ve balanced bir sonraki en iyi noktaya kayar.
     """
     mean_ret = returns_df.mean().values
     cov_mat  = returns_df.cov().values
     ret_mat  = returns_df.values
 
-    strategies = {}
     n = len(pareto_weights)
+    claimed: set[int] = set()
 
-    # 1. Max Sharpe
+    def _pick(scores: np.ndarray, minimize: bool) -> int:
+        arr = np.asarray(scores, dtype=float)
+        if len(claimed) < n:
+            masked = arr.copy()
+            masked[list(claimed)] = np.inf if minimize else -np.inf
+            idx = int(np.argmin(masked) if minimize else np.argmax(masked))
+        else:
+            idx = int(np.argmin(arr) if minimize else np.argmax(arr))
+        claimed.add(idx)
+        return idx
+
+    # Skorları bir kez hesapla; pick sırası farklı olsa da metrikler değişmez.
     sharpes = np.array([
         compute_sharpe(pareto_weights[i], mean_ret, cov_mat,
                        periods_per_year=periods_per_year)
         for i in range(n)
     ])
-    strategies["max_sharpe"] = {
-        "weights": pareto_weights[int(np.argmax(sharpes))],
-        "name":    "Max Sharpe",
-        "color":   "#1D9E75",
-        "marker":  "★",
-    }
-
-    # 2. Max Sortino  (YENİ)
     sortinos = np.array([
         compute_sortino(pareto_weights[i], ret_mat,
                         periods_per_year=periods_per_year)
         for i in range(n)
     ])
-    # sonsuz değerleri maskele
     sortinos_finite = np.where(np.isfinite(sortinos), sortinos, -np.inf)
-    strategies["max_sortino"] = {
-        "weights": pareto_weights[int(np.argmax(sortinos_finite))],
-        "name":    "Max Sortino",
-        "color":   "#E8A33D",
-        "marker":  "✦",
-    }
-
-    # 3. Min CVaR
-    strategies["min_cvar"] = {
-        "weights": pareto_weights[int(np.argmin(pareto_F[:, 1]))],
-        "name":    "Min CVaR",
-        "color":   "#378ADD",
-        "marker":  "◆",
-    }
-
-    # 4. Max Return  (F[:,0] = -return → min)
-    strategies["max_return"] = {
-        "weights": pareto_weights[int(np.argmin(pareto_F[:, 0]))],
-        "name":    "Max Return",
-        "color":   "#D85A30",
-        "marker":  "▲",
-    }
-
-    # 5. Balanced
     F_norm = (pareto_F - pareto_F.min(0)) / (np.ptp(pareto_F, axis=0) + 1e-12)
     dists  = np.linalg.norm(F_norm, axis=1)
-    strategies["balanced"] = {
-        "weights": pareto_weights[int(np.argmin(dists))],
-        "name":    "Balanced",
-        "color":   "#7F77DD",
-        "marker":  "●",
+
+    # Önceliklendirilmiş seçim (claim sırası).
+    sharpe_idx     = _pick(sharpes,         minimize=False)
+    min_cvar_idx   = _pick(pareto_F[:, 1],  minimize=True)
+    max_return_idx = _pick(pareto_F[:, 0],  minimize=True)
+    sortino_idx    = _pick(sortinos_finite, minimize=False)
+    balanced_idx   = _pick(dists,           minimize=True)
+
+    # Görüntü/insertion sırası UI ile uyumlu kalır (önceki davranış).
+    strategies: dict = {
+        "max_sharpe": {
+            "weights": pareto_weights[sharpe_idx],
+            "name":    "Max Sharpe",
+            "color":   "#1D9E75",
+            "marker":  "★",
+        },
+        "max_sortino": {
+            "weights": pareto_weights[sortino_idx],
+            "name":    "Max Sortino",
+            "color":   "#E8A33D",
+            "marker":  "✦",
+        },
+        "min_cvar": {
+            "weights": pareto_weights[min_cvar_idx],
+            "name":    "Min CVaR",
+            "color":   "#378ADD",
+            "marker":  "◆",
+        },
+        "max_return": {
+            "weights": pareto_weights[max_return_idx],
+            "name":    "Max Return",
+            "color":   "#D85A30",
+            "marker":  "▲",
+        },
+        "balanced": {
+            "weights": pareto_weights[balanced_idx],
+            "name":    "Balanced",
+            "color":   "#7F77DD",
+            "marker":  "●",
+        },
     }
 
     # Her strateji için metrik tablosu

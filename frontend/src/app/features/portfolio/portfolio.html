@@ -10,19 +10,23 @@
       <div class="param-grid">
         <div class="form-group">
           <label>Coin Sayısı (n_coins)</label>
-          <input type="number" formControlName="n_coins" />
+          <input type="number" formControlName="n_coins" min="20" max="100" />
+          <span class="hint">20 – 100</span>
         </div>
         <div class="form-group">
           <label>Lookback (gün)</label>
-          <input type="number" formControlName="lookback_days" />
+          <input type="number" formControlName="lookback_days" min="250" max="750" />
+          <span class="hint">250 – 750</span>
         </div>
         <div class="form-group">
           <label>Nesil Sayısı (n_gen)</label>
-          <input type="number" formControlName="n_gen" />
+          <input type="number" formControlName="n_gen" min="20" max="500" />
+          <span class="hint">20 – 500</span>
         </div>
         <div class="form-group">
           <label>Popülasyon (pop_size)</label>
-          <input type="number" formControlName="pop_size" />
+          <input type="number" formControlName="pop_size" min="20" max="500" />
+          <span class="hint">20 – 500</span>
         </div>
       </div>
       @if (errorMessage) {
@@ -34,24 +38,25 @@
     </form>
   </div>
 
-  @if (currentJob) {
+  @if (currentJob(); as job) {
     <div class="card mb-24">
       <div class="job-status-row">
         <h2 class="card-title" style="margin:0">Job Durumu</h2>
-        <span class="badge {{ statusClass(currentJob.status) }}">
-          {{ statusLabel(currentJob.status) }}
+        <span class="badge {{ statusClass(job.status) }}">
+          {{ statusLabel(job.status) }}
         </span>
       </div>
-      <p class="muted mt-8">ID: {{ currentJob.id }}</p>
-      @if (currentJob.status === 'running') {
+      <p class="muted mt-8">ID: {{ job.id }}</p>
+      @if (job.status === 'running') {
         <div class="progress-bar"><div class="progress-fill"></div></div>
       }
     </div>
   }
 
-  @if (strategies.length > 0) {
+  @if (strategies().length > 0) {
     <div class="card mb-24">
       <h2 class="card-title">Strateji Sonuçları</h2>
+      <p class="muted mb-12">Detaylı portföy ağırlıklarını görmek için bir stratejiye tıklayın.</p>
       <div class="table-wrapper">
         <table class="result-table">
           <thead>
@@ -67,15 +72,17 @@
             </tr>
           </thead>
           <tbody>
-            @for (s of strategies; track s.key) {
-              <tr>
+            @for (s of strategies(); track s.key) {
+              <tr (click)="selectStrategy(s.key)"
+                  [class.selected]="selectedStrategy() === s.key">
                 <td class="strategy-name">{{ s.name }}</td>
-                <td [class.positive]="s.annual_return > 0" [class.negative]="s.annual_return < 0">
+                <td [class.positive]="s.annual_return > 0"
+                    [class.negative]="s.annual_return < 0">
                   {{ formatPct(s.annual_return) }}
                 </td>
                 <td>{{ formatPct(s.annual_vol) }}</td>
-                <td>{{ s.sharpe?.toFixed(3) }}</td>
-                <td>{{ s.sortino?.toFixed(3) }}</td>
+                <td>{{ s.sharpe != null ? s.sharpe.toFixed(3) : '—' }}</td>
+                <td>{{ s.sortino != null ? s.sortino.toFixed(3) : '—' }}</td>
                 <td>{{ formatPct(s.cvar_annual) }}</td>
                 <td>{{ formatPct(s.max_drawdown) }}</td>
                 <td class="center">{{ s.n_active }}</td>
@@ -86,9 +93,56 @@
       </div>
     </div>
 
-    <div class="card">
+    <div class="card mb-24">
       <h2 class="card-title">Pareto Frontier (CVaR sıralı — Yıllık Getiri %)</h2>
-      <div #chartContainer class="chart-container"></div>
+      <div class="legend">
+        @for (item of strategyLegend; track item.key) {
+          <button type="button"
+                  class="legend-item"
+                  [class.selected]="selectedStrategy() === item.key"
+                  (click)="selectStrategy(item.key)">
+            <span class="legend-dot" [style.background]="item.color"></span>
+            <span>{{ item.label }}</span>
+          </button>
+        }
+      </div>
+      <div class="chart-wrapper">
+        <div #chartContainer class="chart-container"></div>
+        @if (tooltip(); as t) {
+          <div class="chart-tooltip"
+               [style.left.px]="t.x + 14"
+               [style.top.px]="t.y + 14">
+            @if (t.strategyName) {
+              <div class="tt-label"
+                   [style.color]="t.strategyKey ? strategyColors[t.strategyKey] : '#e2e8f0'">
+                {{ t.strategyName }}
+              </div>
+            }
+            <div class="tt-row"><span>CVaR (yıllık):</span> <strong>{{ formatPct(t.annualCvar) }}</strong></div>
+            <div class="tt-row"><span>Yıllık Getiri:</span> <strong>{{ formatPct(t.annualReturn) }}</strong></div>
+          </div>
+        }
+      </div>
     </div>
+
+    @if (selectedStrategy() && selectedWeights().length > 0) {
+      <div class="card">
+        <h2 class="card-title">
+          Portföy Ağırlıkları —
+          <span class="strategy-name">{{ selectedStrategyName() }}</span>
+        </h2>
+        <div class="weights-grid">
+          @for (w of selectedWeights(); track w.ticker) {
+            <div class="weight-row">
+              <span class="weight-ticker">{{ w.ticker }}</span>
+              <div class="weight-bar">
+                <div class="weight-fill" [style.width.%]="w.weight * 100"></div>
+              </div>
+              <span class="weight-pct">{{ formatPct(w.weight) }}</span>
+            </div>
+          }
+        </div>
+      </div>
+    }
   }
 </div>
