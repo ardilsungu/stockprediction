@@ -95,7 +95,34 @@
 
     <div class="card mb-24">
       <h2 class="card-title">Pareto Frontier (CVaR sıralı — Yıllık Getiri %)</h2>
-      <div #chartContainer class="chart-container"></div>
+      <div class="legend">
+        @for (item of strategyLegend; track item.key) {
+          <button type="button"
+                  class="legend-item"
+                  [class.selected]="selectedStrategy() === item.key"
+                  (click)="selectStrategy(item.key)">
+            <span class="legend-dot" [style.background]="item.color"></span>
+            <span>{{ item.label }}</span>
+          </button>
+        }
+      </div>
+      <div class="chart-wrapper">
+        <div #chartContainer class="chart-container"></div>
+        @if (tooltip(); as t) {
+          <div class="chart-tooltip"
+               [style.left.px]="t.x + 14"
+               [style.top.px]="t.y + 14">
+            @if (t.strategyName) {
+              <div class="tt-label"
+                   [style.color]="t.strategyKey ? strategyColors[t.strategyKey] : '#e2e8f0'">
+                {{ t.strategyName }}
+              </div>
+            }
+            <div class="tt-row"><span>CVaR (yıllık):</span> <strong>{{ formatPct(t.annualCvar) }}</strong></div>
+            <div class="tt-row"><span>Yıllık Getiri:</span> <strong>{{ formatPct(t.annualReturn) }}</strong></div>
+          </div>
+        }
+      </div>
     </div>
 
     @if (selectedStrategy() && selectedWeights().length > 0) {
