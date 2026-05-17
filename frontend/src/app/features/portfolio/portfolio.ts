@@ -3,6 +3,7 @@ import {
   ElementRef, ViewChild, signal, computed, effect,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { ActivatedRoute } from '@angular/router';
 import { ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { PortfolioService } from '../../core/services/portfolio';
 import { ParetoSolution, PortfolioJobDetail, StrategyMetrics } from '../../core/models';
@@ -107,7 +108,11 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
   private markersApi: ISeriesMarkersPluginApi<Time> | null = null;
   private plotPoints: PlotPoint[] = [];
 
-  constructor(private fb: FormBuilder, private portfolioService: PortfolioService) {
+  constructor(
+    private fb: FormBuilder,
+    private portfolioService: PortfolioService,
+    private route: ActivatedRoute,
+  ) {
     this.form = this.fb.group({
       n_coins:      [50,  [Validators.required, Validators.min(20),  Validators.max(100)]],
       lookback_days:[365, [Validators.required, Validators.min(250), Validators.max(750)]],
@@ -121,8 +126,23 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
     });
   }
 
-  ngOnInit(): void {}
+  ngOnInit(): void {
+    this.route.queryParams.subscribe((params) => {
+      const jobId = params['jobId'];
+      if (jobId) this.loadJobById(jobId);
+    });
+  }
   ngAfterViewInit(): void {}
+
+  private loadJobById(jobId: string): void {
+    this.clearPoll();
+    this.disposeChart();
+    this.currentJob.set(null);
+    this.selectedStrategy.set(null);
+    this.tooltip.set(null);
+    this.errorMessage = '';
+    this.startPolling(jobId);
+  }
 
   ngOnDestroy(): void {
     this.clearPoll();

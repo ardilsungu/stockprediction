@@ -13,7 +13,7 @@
   </div>
 
   <div class="card">
-    <h2 class="card-title">Son Optimizasyonlar</h2>
+    <h2 class="card-title">Tüm Optimizasyonlar</h2>
 
     @if (loading) {
       <p class="muted">Yükleniyor...</p>
@@ -22,7 +22,7 @@
     } @else {
       <div class="job-list">
         @for (job of recentJobs; track job.id) {
-          <div class="job-row">
+          <div class="job-row job-row-clickable" (click)="openJob(job.id)">
             <div class="job-info">
               <span class="job-id">{{ job.id.slice(0, 8) }}...</span>
               <span class="job-date">{{ job.created_at | date: 'dd MMM, HH:mm' }}</span>
