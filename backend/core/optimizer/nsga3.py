@@ -902,32 +902,37 @@ def select_portfolio_strategies(
         4. Max Return   — en agresif
         5. Balanced     — ideal noktaya en yakın (ortalama)
 
-    Tie-break: Her strateji Pareto cephesinden FARKLI bir nokta seçer; daha
-    önce sahiplenilen indeksler maskelenir. Bu, küçük cephelerde (ör. uç
-    noktanın hem max_return hem max_sortino için optimal olduğu durumda)
-    iki stratejinin aynı portföye düşmesini önler. Cephede 5'ten az nokta
-    varsa zorunlu paylaşım olur (global best'e geri düşülür).
+    Tie-break: Her seçimde önce hiç sahiplenilmemiş indeksler arasından, hepsi
+    sahiplenilmişse en az kez seçilenler arasından en iyi skor seçilir. Cephe
+    ≥5 noktaysa 5 benzersiz strateji çıkar; <5 noktaysa zorunlu paylaşım
+    minimum tekrarla yapılır ve tekrarlı stratejiler `is_duplicate=True`
+    bayrağıyla işaretlenir (UI'da uyarı için).
 
     Önceliklendirme: sharpe → min_cvar → max_return → max_sortino → balanced.
-    Çakışma durumunda sortino ve balanced bir sonraki en iyi noktaya kayar.
     """
     mean_ret = returns_df.mean().values
     cov_mat  = returns_df.cov().values
     ret_mat  = returns_df.values
 
     n = len(pareto_weights)
-    claimed: set[int] = set()
+    pick_count: dict[int, int] = {i: 0 for i in range(n)}
 
-    def _pick(scores: np.ndarray, minimize: bool) -> int:
+    def _pick(scores: np.ndarray, minimize: bool) -> tuple[int, bool]:
+        """En az sahiplenilmiş indeksler arasından en iyi skoru olanı seç.
+
+        Returns (idx, is_duplicate) — is_duplicate True ise bu indeks bu
+        çağrıdan önce zaten başka bir strateji tarafından seçilmiş demektir.
+        """
         arr = np.asarray(scores, dtype=float)
-        if len(claimed) < n:
-            masked = arr.copy()
-            masked[list(claimed)] = np.inf if minimize else -np.inf
-            idx = int(np.argmin(masked) if minimize else np.argmax(masked))
+        min_count = min(pick_count.values())
+        candidates = [i for i, c in pick_count.items() if c == min_count]
+        if minimize:
+            idx = min(candidates, key=lambda i: arr[i])
         else:
-            idx = int(np.argmin(arr) if minimize else np.argmax(arr))
-        claimed.add(idx)
-        return idx
+            idx = max(candidates, key=lambda i: arr[i])
+        is_dup = pick_count[idx] > 0
+        pick_count[idx] += 1
+        return idx, is_dup
 
     # Skorları bir kez hesapla; pick sırası farklı olsa da metrikler değişmez.
     sharpes = np.array([
@@ -945,43 +950,48 @@ def select_portfolio_strategies(
     dists  = np.linalg.norm(F_norm, axis=1)
 
     # Önceliklendirilmiş seçim (claim sırası).
-    sharpe_idx     = _pick(sharpes,         minimize=False)
-    min_cvar_idx   = _pick(pareto_F[:, 1],  minimize=True)
-    max_return_idx = _pick(pareto_F[:, 0],  minimize=True)
-    sortino_idx    = _pick(sortinos_finite, minimize=False)
-    balanced_idx   = _pick(dists,           minimize=True)
+    sharpe_idx,     sharpe_dup     = _pick(sharpes,         minimize=False)
+    min_cvar_idx,   min_cvar_dup   = _pick(pareto_F[:, 1],  minimize=True)
+    max_return_idx, max_return_dup = _pick(pareto_F[:, 0],  minimize=True)
+    sortino_idx,    sortino_dup    = _pick(sortinos_finite, minimize=False)
+    balanced_idx,   balanced_dup   = _pick(dists,           minimize=True)
 
     # Görüntü/insertion sırası UI ile uyumlu kalır (önceki davranış).
     strategies: dict = {
         "max_sharpe": {
-            "weights": pareto_weights[sharpe_idx],
-            "name":    "Max Sharpe",
-            "color":   "#1D9E75",
-            "marker":  "★",
+            "weights":      pareto_weights[sharpe_idx],
+            "name":         "Max Sharpe",
+            "color":        "#1D9E75",
+            "marker":       "★",
+            "is_duplicate": sharpe_dup,
         },
         "max_sortino": {
-            "weights": pareto_weights[sortino_idx],
-            "name":    "Max Sortino",
-            "color":   "#E8A33D",
-            "marker":  "✦",
+            "weights":      pareto_weights[sortino_idx],
+            "name":         "Max Sortino",
+            "color":        "#E8A33D",
+            "marker":       "✦",
+            "is_duplicate": sortino_dup,
         },
         "min_cvar": {
-            "weights": pareto_weights[min_cvar_idx],
-            "name":    "Min CVaR",
-            "color":   "#378ADD",
-            "marker":  "◆",
+            "weights":      pareto_weights[min_cvar_idx],
+            "name":         "Min CVaR",
+            "color":        "#378ADD",
+            "marker":       "◆",
+            "is_duplicate": min_cvar_dup,
         },
         "max_return": {
-            "weights": pareto_weights[max_return_idx],
-            "name":    "Max Return",
-            "color":   "#D85A30",
-            "marker":  "▲",
+            "weights":      pareto_weights[max_return_idx],
+            "name":         "Max Return",
+            "color":        "#D85A30",
+            "marker":       "▲",
+            "is_duplicate": max_return_dup,
         },
         "balanced": {
-            "weights": pareto_weights[balanced_idx],
-            "name":    "Balanced",
-            "color":   "#7F77DD",
-            "marker":  "●",
+            "weights":      pareto_weights[balanced_idx],
+            "name":         "Balanced",
+            "color":        "#7F77DD",
+            "marker":       "●",
+            "is_duplicate": balanced_dup,
         },
     }
 
