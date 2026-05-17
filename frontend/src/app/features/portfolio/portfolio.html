@@ -102,7 +102,11 @@
     </div>
 
     <div class="card mb-24">
-      <h2 class="card-title">Pareto Frontier (CVaR sıralı — Yıllık Getiri %)</h2>
+      <h2 class="card-title">Pareto Frontier — Risk vs Getiri</h2>
+      <p class="chart-description">
+        Sol alt = düşük risk, düşük getiri &nbsp;|&nbsp;
+        Sağ üst = yüksek risk, yüksek getiri
+      </p>
       <div class="legend">
         @for (item of strategyLegend; track item.key) {
           <button type="button"
@@ -115,7 +119,9 @@
         }
       </div>
       <div class="chart-wrapper">
+        <div class="y-axis-label">Yıllık Getiri %</div>
         <div #chartContainer class="chart-container"></div>
+        <div class="x-axis-label">CVaR (Günlük Risk %)</div>
         @if (tooltip(); as t) {
           <div class="chart-tooltip"
                [style.left.px]="t.x + 14"
@@ -126,8 +132,11 @@
                 {{ t.strategyName }}
               </div>
             }
-            <div class="tt-row"><span>CVaR (yıllık):</span> <strong>{{ formatPct(t.annualCvar) }}</strong></div>
             <div class="tt-row"><span>Yıllık Getiri:</span> <strong>{{ formatPct(t.annualReturn) }}</strong></div>
+            <div class="tt-row"><span>Günlük CVaR:</span> <strong>{{ formatPct(t.dailyCvar) }}</strong></div>
+            @if (t.sharpe != null) {
+              <div class="tt-row"><span>Sharpe:</span> <strong>{{ t.sharpe.toFixed(2) }}</strong></div>
+            }
           </div>
         }
       </div>

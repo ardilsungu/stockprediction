@@ -55,10 +55,14 @@ interface TooltipState {
   x: number;
   y: number;
   annualCvar: number;
+  dailyCvar: number;
   annualReturn: number;
   strategyKey?: string;
   strategyName?: string;
+  sharpe?: number;
 }
+
+const SQRT_365 = Math.sqrt(365);
 
 @Component({
   selector: 'app-portfolio',
@@ -232,12 +236,23 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
 
     this.chart = createChart(this.chartContainer.nativeElement, {
       width: this.chartContainer.nativeElement.offsetWidth,
-      height: 360,
+      height: 400,
       layout: { background: { type: ColorType.Solid, color: '#0f1117' }, textColor: '#94a3b8' },
       grid:   { vertLines: { color: '#1e2235' }, horzLines: { color: '#1e2235' } },
       rightPriceScale: { borderColor: '#2a2d3e' },
-      timeScale: { borderColor: '#2a2d3e', visible: false },
+      timeScale: {
+        borderColor: '#2a2d3e',
+        visible: true,
+        tickMarkFormatter: (time: Time) => {
+          const pt = this.plotPoints.find(p => p.index === Number(time));
+          if (!pt) return '';
+          return `${(pt.annualCvar / SQRT_365 * 100).toFixed(2)}%`;
+        },
+      },
       crosshair: { mode: 1 },
+      localization: {
+        priceFormatter: (price: number) => `${price.toFixed(2)}%`,
+      },
     });
 
     this.mainSeries = this.chart.addSeries(LineSeries, {
@@ -345,13 +360,17 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
     const t = Number(param.time);
     const pt = this.plotPoints.find(p => p.index === t);
     if (!pt) { this.tooltip.set(null); return; }
+    const strategiesDict = this.currentJob()?.result?.strategies;
+    const sharpe = pt.strategyKey ? strategiesDict?.[pt.strategyKey]?.sharpe : undefined;
     this.tooltip.set({
       x: param.point.x,
       y: param.point.y,
       annualCvar:   pt.annualCvar,
+      dailyCvar:    pt.annualCvar / SQRT_365,
       annualReturn: pt.annualReturn,
       strategyKey:  pt.strategyKey,
       strategyName: pt.strategyKey ? (STRATEGY_LABELS[pt.strategyKey] ?? pt.strategyKey) : undefined,
+      sharpe:       typeof sharpe === 'number' ? sharpe : undefined,
     });
   }
 }
