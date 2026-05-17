@@ -1,4 +1,4 @@
-import { Component, OnInit, computed, signal } from '@angular/core';
+import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { AssetService } from '../../core/services/asset';
 
@@ -10,28 +10,16 @@ import { AssetService } from '../../core/services/asset';
   styleUrl: './watchlist.scss',
 })
 export class Watchlist implements OnInit {
-  assets = signal<any[]>([]);
+  assets: any[]    = [];
   watchlist: any[] = [];
   loading = true;
   actionLoading: Record<string, boolean> = {};
-  searchQuery = signal<string>('');
-
-  filteredAssets = computed(() => {
-    const q = this.searchQuery().trim().toLowerCase();
-    const all = this.assets();
-    if (!q) return all;
-    return all.filter(
-      (a) =>
-        (a.symbol ?? '').toLowerCase().includes(q) ||
-        (a.name ?? '').toLowerCase().includes(q),
-    );
-  });
 
   constructor(private assetService: AssetService) {}
 
   ngOnInit(): void {
     this.assetService.getAssets().subscribe({
-      next: (a) => this.assets.set(a),
+      next: (a) => (this.assets = a),
     });
     this.assetService.getWatchlist().subscribe({
       next: (w) => {
@@ -40,10 +28,6 @@ export class Watchlist implements OnInit {
       },
       error: () => (this.loading = false),
     });
-  }
-
-  onSearchInput(event: Event): void {
-    this.searchQuery.set((event.target as HTMLInputElement).value);
   }
 
   isWatched(assetId: string): boolean {

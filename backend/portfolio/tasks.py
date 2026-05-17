@@ -53,7 +53,6 @@ def _build_pareto_list(pareto_F, pareto_weights, tickers: list) -> list:
 @shared_task(bind=True, max_retries=3, default_retry_delay=5)
 def run_portfolio_optimization(self, job_id, params):
     from .models import PortfolioJob, PortfolioResult
-    from assets.models import Asset
     from core.optimizer.nsga3 import (
         fetch_top_coins,
         load_prices_from_yfinance,
@@ -189,17 +188,6 @@ def run_portfolio_optimization(self, job_id, params):
             }
 
         pareto_list = _build_pareto_list(pareto_F, pareto_weights, tickers)
-
-        for symbol in surviving:
-            Asset.objects.get_or_create(
-                symbol=symbol,
-                defaults={
-                    'name': symbol,
-                    'category': 'crypto',
-                    'is_active': True,
-                    'market_cap': 0,
-                },
-            )
 
         PortfolioResult.objects.create(
             job=job,
