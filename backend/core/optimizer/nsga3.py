@@ -493,6 +493,17 @@ def apply_sanity_filter(
     -------
     DataFrame : temizlenmiş returns_df
     """
+    # yfinance bazen ffill sonrası bile NaN bırakır (ör. listing günü öncesi
+    # yok-veri); NaN sütunu kovaryans matrisini ve risk metriklerini bozar →
+    # sanity filter eşiklerinden önce baştan elenmeli.
+    nan_cols = returns_df.columns[returns_df.isna().any()].tolist()
+    if nan_cols:
+        if verbose:
+            head = ", ".join(nan_cols[:10])
+            tail = "..." if len(nan_cols) > 10 else ""
+            print(f"[Sanity Filter] NaN içeren {len(nan_cols)} coin önden elendi: {head}{tail}")
+        returns_df = returns_df.drop(columns=nan_cols)
+
     daily_means = returns_df.mean()
     daily_vols  = returns_df.std()
     annual_vols = daily_vols * np.sqrt(periods_per_year)
@@ -606,6 +617,8 @@ def compute_cvar(weights: np.ndarray, returns_matrix: np.ndarray,
     CVaRα = E(ξ | ξ ≤ VaRα)   — Zhao et al. (2025) formülü
     Pozitif döndürür → minimize edilecek kayıp büyüklüğü.
     """
+    if np.isnan(returns_matrix).any():
+        raise ValueError("compute_cvar: returns_matrix NaN içeriyor")
     port_returns = returns_matrix @ weights
     if port_returns.size == 0:
         raise ValueError(
@@ -626,6 +639,8 @@ def compute_sharpe(weights: np.ndarray, mean_returns: np.ndarray,
     Sharpe oranı (yıllıklaştırılmış).
     Kripto 7/24 işlem gördüğü için yıllıklaştırma faktörü = 365.
     """
+    if np.isnan(mean_returns).any() or np.isnan(cov_matrix).any():
+        raise ValueError("compute_sharpe: mean_returns veya cov_matrix NaN içeriyor")
     ret = compute_portfolio_return(weights, mean_returns) * periods_per_year
     vol = compute_portfolio_volatility(weights, cov_matrix) * np.sqrt(periods_per_year)
     return (ret - risk_free_rate) / (vol + 1e-9)
@@ -644,6 +659,8 @@ def compute_sortino(weights: np.ndarray, returns_matrix: np.ndarray,
 
     target : minimum kabul edilebilir getiri (MAR), varsayılan 0
     """
+    if np.isnan(returns_matrix).any():
+        raise ValueError("compute_sortino: returns_matrix NaN içeriyor")
     port_returns = returns_matrix @ weights
     ann_return   = port_returns.mean() * periods_per_year
 
@@ -793,10 +810,14 @@ class CryptoPortfolioProblem(Problem):
         F = np.zeros((pop_size, self.n_obj))
         G = np.zeros((pop_size, 3))
 
+        n_days = self.returns_matrix.shape[0]
         for i in range(pop_size):
             w = W[i]
-            tc = self.transaction_cost * np.sum(np.abs(w - self.current_weights))
-            ret  = compute_portfolio_return(w, self.mean_returns) - tc
+            # TC bir kerelik rebalance maliyetidir; lookback gün sayısına
+            # amortize ederek günlük getiriden düş. Eskiden tüm TC günlük
+            # getiriden çıkıyordu → 5 varlıkta ~%60 yapay yıllık kayıp.
+            tc_daily = self.transaction_cost * np.sum(np.abs(w - self.current_weights)) / n_days
+            ret  = compute_portfolio_return(w, self.mean_returns) - tc_daily
             cvar = compute_cvar(w, self.returns_matrix, self.alpha)
 
             F[i, 0] = -ret
@@ -870,6 +891,12 @@ def run_nsga3_optimization(
 
     X_opt = res.X
     F_opt = res.F
+    if X_opt is None or len(X_opt) == 0:
+        raise RuntimeError(
+            "NSGA-III feasible çözüm bulamadı. "
+            "Kısıtları gevşetin: max_weight artırın, "
+            "min_assets azaltın veya n_gen artırın."
+        )
     pareto_weights = X_opt / (X_opt.sum(axis=1, keepdims=True) + 1e-12)
 
     print(f"\n  Pareto-optimal çözüm sayısı: {len(pareto_weights)}")
