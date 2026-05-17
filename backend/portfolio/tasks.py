@@ -177,6 +177,7 @@ def run_portfolio_optimization(self, job_id, params):
                 "cvar_annual":   round(float(s["cvar_annual"]), 6),
                 "max_drawdown":  round(float(s["max_drawdown"]), 6),
                 "n_active":      int(s["n_active"]),
+                "is_duplicate":  bool(s.get("is_duplicate", False)),
             }
 
         weights_dict = {}

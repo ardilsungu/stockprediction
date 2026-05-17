@@ -74,8 +74,16 @@
           <tbody>
             @for (s of strategies(); track s.key) {
               <tr (click)="selectStrategy(s.key)"
-                  [class.selected]="selectedStrategy() === s.key">
-                <td class="strategy-name">{{ s.name }}</td>
+                  [class.selected]="selectedStrategy() === s.key"
+                  [class.duplicate]="s.is_duplicate">
+                <td class="strategy-name">
+                  {{ s.name }}
+                  @if (s.is_duplicate) {
+                    <span class="badge-duplicate" title="Pareto cephesi yetersiz — bu strateji başka bir strateji ile aynı portföye işaret ediyor">
+                      (Pareto cephesi yetersiz)
+                    </span>
+                  }
+                </td>
                 <td [class.positive]="s.annual_return > 0"
                     [class.negative]="s.annual_return < 0">
                   {{ formatPct(s.annual_return) }}
