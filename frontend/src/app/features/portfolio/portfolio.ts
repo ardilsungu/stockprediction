@@ -55,14 +55,11 @@ interface TooltipState {
   x: number;
   y: number;
   annualCvar: number;
-  dailyCvar: number;
   annualReturn: number;
   strategyKey?: string;
   strategyName?: string;
   sharpe?: number;
 }
-
-const SQRT_365 = Math.sqrt(365);
 
 @Component({
   selector: 'app-portfolio',
@@ -246,7 +243,7 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
         tickMarkFormatter: (time: Time) => {
           const pt = this.plotPoints.find(p => p.index === Number(time));
           if (!pt) return '';
-          return `${(pt.annualCvar / SQRT_365 * 100).toFixed(2)}%`;
+          return `${(pt.annualCvar * 100).toFixed(1)}%`;
         },
       },
       crosshair: { mode: 1 },
@@ -366,7 +363,6 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
       x: param.point.x,
       y: param.point.y,
       annualCvar:   pt.annualCvar,
-      dailyCvar:    pt.annualCvar / SQRT_365,
       annualReturn: pt.annualReturn,
       strategyKey:  pt.strategyKey,
       strategyName: pt.strategyKey ? (STRATEGY_LABELS[pt.strategyKey] ?? pt.strategyKey) : undefined,

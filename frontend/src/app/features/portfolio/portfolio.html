@@ -121,7 +121,7 @@
       <div class="chart-wrapper">
         <div class="y-axis-label">Yıllık Getiri %</div>
         <div #chartContainer class="chart-container"></div>
-        <div class="x-axis-label">CVaR (Günlük Risk %)</div>
+        <div class="x-axis-label">Yıllık CVaR (Risk %)</div>
         @if (tooltip(); as t) {
           <div class="chart-tooltip"
                [style.left.px]="t.x + 14"
@@ -133,7 +133,7 @@
               </div>
             }
             <div class="tt-row"><span>Yıllık Getiri:</span> <strong>{{ formatPct(t.annualReturn) }}</strong></div>
-            <div class="tt-row"><span>Günlük CVaR:</span> <strong>{{ formatPct(t.dailyCvar) }}</strong></div>
+            <div class="tt-row"><span>Yıllık CVaR:</span> <strong>{{ formatPct(t.annualCvar) }}</strong></div>
             @if (t.sharpe != null) {
               <div class="tt-row"><span>Sharpe:</span> <strong>{{ t.sharpe.toFixed(2) }}</strong></div>
             }
