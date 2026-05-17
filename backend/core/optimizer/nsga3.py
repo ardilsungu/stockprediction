@@ -24,6 +24,8 @@ Kurulum:
 # ─────────────────────────────────────────────
 # 0. IMPORT
 # ─────────────────────────────────────────────
+import os
+import random
 import time
 import warnings
 import numpy as np
@@ -35,12 +37,26 @@ warnings.filterwarnings("ignore")
 # pymoo imports
 from pymoo.algorithms.moo.nsga3 import NSGA3
 from pymoo.core.problem import Problem
+from pymoo.core.duplicate import ElementwiseDuplicateElimination
 from pymoo.optimize import minimize
 from pymoo.util.ref_dirs import get_reference_directions
 from pymoo.operators.sampling.rnd import FloatRandomSampling
 from pymoo.operators.crossover.sbx import SBX
 from pymoo.operators.mutation.pm import PM
 from pymoo.termination import get_termination
+
+
+class NumpyDuplicateElimination(ElementwiseDuplicateElimination):
+    """Tolerans tabanlı duplicate eliminasyonu (np.allclose).
+
+    pymoo'nun default davranışı `eliminate_duplicates=True` Python built-in
+    hash() kullanır; Python 3.3+ default `PYTHONHASHSEED` rastgele olduğu için
+    aynı seed=42 ile bile her process'te farklı kromozomlar elenir →
+    reproducibility kırılır. NumPy `allclose` ile karşılaştırma yaparak hash
+    randomization'a olan bağımlılığı tamamen ortadan kaldırıyoruz.
+    """
+    def is_equal(self, a, b):
+        return np.allclose(a.X, b.X, atol=1e-8)
 
 
 # ─────────────────────────────────────────────
@@ -851,6 +867,15 @@ def run_nsga3_optimization(
     seed: int = 42,
     verbose: bool = True,
 ) -> dict:
+    # Reproducibility: PYTHONHASHSEED process başında set edilmeli (etkili
+    # olması için start_celery.sh / start_django.sh wrapper'larını kullan).
+    # Aşağıdaki satır mevcut process'in hash seed'ini değiştirmez, sadece
+    # child process'lere işaret eder; asıl deterministiklik garantisi
+    # NumpyDuplicateElimination + numpy/random seed reset ile sağlanıyor.
+    os.environ['PYTHONHASHSEED'] = '0'
+    random.seed(seed)
+    np.random.seed(seed)
+
     print("\n" + "="*62)
     print("  NSGA-III Kripto Portföy Optimizasyonu")
     print(f"  Varlık sayısı : {len(returns_df.columns)}")
@@ -881,7 +906,7 @@ def run_nsga3_optimization(
         sampling=FloatRandomSampling(),
         crossover=SBX(prob=0.9, eta=15),
         mutation=PM(prob=1.0 / problem.n_var, eta=20),
-        eliminate_duplicates=True,
+        eliminate_duplicates=NumpyDuplicateElimination(),
     )
 
     res = minimize(
