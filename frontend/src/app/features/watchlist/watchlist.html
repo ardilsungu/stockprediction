@@ -9,8 +9,15 @@
   } @else {
     <div class="card">
       <h2 class="card-title">Tüm Varlıklar</h2>
+      <input
+        type="text"
+        class="search-input"
+        placeholder="Sembol veya isim ara..."
+        [value]="searchQuery()"
+        (input)="onSearchInput($event)"
+      />
       <div class="asset-grid">
-        @for (asset of assets; track asset.id) {
+        @for (asset of filteredAssets(); track asset.id) {
           <div class="asset-card" [class.watched]="isWatched(asset.id)">
             <div class="asset-info">
               <span class="asset-symbol">{{ asset.symbol }}</span>
