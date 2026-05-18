@@ -74,8 +74,16 @@
           <tbody>
             @for (s of strategies(); track s.key) {
               <tr (click)="selectStrategy(s.key)"
-                  [class.selected]="selectedStrategy() === s.key">
-                <td class="strategy-name">{{ s.name }}</td>
+                  [class.selected]="selectedStrategy() === s.key"
+                  [class.duplicate]="s.is_duplicate">
+                <td class="strategy-name">
+                  {{ s.name }}
+                  @if (s.is_duplicate) {
+                    <span class="badge-duplicate" title="Pareto cephesi yetersiz — bu strateji başka bir strateji ile aynı portföye işaret ediyor">
+                      (Pareto cephesi yetersiz)
+                    </span>
+                  }
+                </td>
                 <td [class.positive]="s.annual_return > 0"
                     [class.negative]="s.annual_return < 0">
                   {{ formatPct(s.annual_return) }}
@@ -94,7 +102,11 @@
     </div>
 
     <div class="card mb-24">
-      <h2 class="card-title">Pareto Frontier (CVaR sıralı — Yıllık Getiri %)</h2>
+      <h2 class="card-title">Pareto Frontier — Risk vs Getiri</h2>
+      <p class="chart-description">
+        Sol alt = düşük risk, düşük getiri &nbsp;|&nbsp;
+        Sağ üst = yüksek risk, yüksek getiri
+      </p>
       <div class="legend">
         @for (item of strategyLegend; track item.key) {
           <button type="button"
@@ -107,7 +119,9 @@
         }
       </div>
       <div class="chart-wrapper">
+        <div class="y-axis-label">Yıllık Getiri %</div>
         <div #chartContainer class="chart-container"></div>
+        <div class="x-axis-label">Yıllık CVaR (Risk %)</div>
         @if (tooltip(); as t) {
           <div class="chart-tooltip"
                [style.left.px]="t.x + 14"
@@ -118,8 +132,11 @@
                 {{ t.strategyName }}
               </div>
             }
-            <div class="tt-row"><span>CVaR (yıllık):</span> <strong>{{ formatPct(t.annualCvar) }}</strong></div>
             <div class="tt-row"><span>Yıllık Getiri:</span> <strong>{{ formatPct(t.annualReturn) }}</strong></div>
+            <div class="tt-row"><span>Yıllık CVaR:</span> <strong>{{ formatPct(t.annualCvar) }}</strong></div>
+            @if (t.sharpe != null) {
+              <div class="tt-row"><span>Sharpe:</span> <strong>{{ t.sharpe.toFixed(2) }}</strong></div>
+            }
           </div>
         }
       </div>

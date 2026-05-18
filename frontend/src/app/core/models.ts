@@ -70,6 +70,7 @@ export interface StrategyMetrics {
   cvar_annual: number;
   max_drawdown: number;
   n_active: number;
+  is_duplicate?: boolean;
 }
 
 export interface ParetoSolution {

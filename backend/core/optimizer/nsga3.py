@@ -24,6 +24,8 @@ Kurulum:
 # ─────────────────────────────────────────────
 # 0. IMPORT
 # ─────────────────────────────────────────────
+import os
+import random
 import time
 import warnings
 import numpy as np
@@ -35,12 +37,26 @@ warnings.filterwarnings("ignore")
 # pymoo imports
 from pymoo.algorithms.moo.nsga3 import NSGA3
 from pymoo.core.problem import Problem
+from pymoo.core.duplicate import ElementwiseDuplicateElimination
 from pymoo.optimize import minimize
 from pymoo.util.ref_dirs import get_reference_directions
 from pymoo.operators.sampling.rnd import FloatRandomSampling
 from pymoo.operators.crossover.sbx import SBX
 from pymoo.operators.mutation.pm import PM
 from pymoo.termination import get_termination
+
+
+class NumpyDuplicateElimination(ElementwiseDuplicateElimination):
+    """Tolerans tabanlı duplicate eliminasyonu (np.allclose).
+
+    pymoo'nun default davranışı `eliminate_duplicates=True` Python built-in
+    hash() kullanır; Python 3.3+ default `PYTHONHASHSEED` rastgele olduğu için
+    aynı seed=42 ile bile her process'te farklı kromozomlar elenir →
+    reproducibility kırılır. NumPy `allclose` ile karşılaştırma yaparak hash
+    randomization'a olan bağımlılığı tamamen ortadan kaldırıyoruz.
+    """
+    def is_equal(self, a, b):
+        return np.allclose(a.X, b.X, atol=1e-8)
 
 
 # ─────────────────────────────────────────────
@@ -493,6 +509,17 @@ def apply_sanity_filter(
     -------
     DataFrame : temizlenmiş returns_df
     """
+    # yfinance bazen ffill sonrası bile NaN bırakır (ör. listing günü öncesi
+    # yok-veri); NaN sütunu kovaryans matrisini ve risk metriklerini bozar →
+    # sanity filter eşiklerinden önce baştan elenmeli.
+    nan_cols = returns_df.columns[returns_df.isna().any()].tolist()
+    if nan_cols:
+        if verbose:
+            head = ", ".join(nan_cols[:10])
+            tail = "..." if len(nan_cols) > 10 else ""
+            print(f"[Sanity Filter] NaN içeren {len(nan_cols)} coin önden elendi: {head}{tail}")
+        returns_df = returns_df.drop(columns=nan_cols)
+
     daily_means = returns_df.mean()
     daily_vols  = returns_df.std()
     annual_vols = daily_vols * np.sqrt(periods_per_year)
@@ -606,6 +633,8 @@ def compute_cvar(weights: np.ndarray, returns_matrix: np.ndarray,
     CVaRα = E(ξ | ξ ≤ VaRα)   — Zhao et al. (2025) formülü
     Pozitif döndürür → minimize edilecek kayıp büyüklüğü.
     """
+    if np.isnan(returns_matrix).any():
+        raise ValueError("compute_cvar: returns_matrix NaN içeriyor")
     port_returns = returns_matrix @ weights
     if port_returns.size == 0:
         raise ValueError(
@@ -626,6 +655,8 @@ def compute_sharpe(weights: np.ndarray, mean_returns: np.ndarray,
     Sharpe oranı (yıllıklaştırılmış).
     Kripto 7/24 işlem gördüğü için yıllıklaştırma faktörü = 365.
     """
+    if np.isnan(mean_returns).any() or np.isnan(cov_matrix).any():
+        raise ValueError("compute_sharpe: mean_returns veya cov_matrix NaN içeriyor")
     ret = compute_portfolio_return(weights, mean_returns) * periods_per_year
     vol = compute_portfolio_volatility(weights, cov_matrix) * np.sqrt(periods_per_year)
     return (ret - risk_free_rate) / (vol + 1e-9)
@@ -644,6 +675,8 @@ def compute_sortino(weights: np.ndarray, returns_matrix: np.ndarray,
 
     target : minimum kabul edilebilir getiri (MAR), varsayılan 0
     """
+    if np.isnan(returns_matrix).any():
+        raise ValueError("compute_sortino: returns_matrix NaN içeriyor")
     port_returns = returns_matrix @ weights
     ann_return   = port_returns.mean() * periods_per_year
 
@@ -793,10 +826,14 @@ class CryptoPortfolioProblem(Problem):
         F = np.zeros((pop_size, self.n_obj))
         G = np.zeros((pop_size, 3))
 
+        n_days = self.returns_matrix.shape[0]
         for i in range(pop_size):
             w = W[i]
-            tc = self.transaction_cost * np.sum(np.abs(w - self.current_weights))
-            ret  = compute_portfolio_return(w, self.mean_returns) - tc
+            # TC bir kerelik rebalance maliyetidir; lookback gün sayısına
+            # amortize ederek günlük getiriden düş. Eskiden tüm TC günlük
+            # getiriden çıkıyordu → 5 varlıkta ~%60 yapay yıllık kayıp.
+            tc_daily = self.transaction_cost * np.sum(np.abs(w - self.current_weights)) / n_days
+            ret  = compute_portfolio_return(w, self.mean_returns) - tc_daily
             cvar = compute_cvar(w, self.returns_matrix, self.alpha)
 
             F[i, 0] = -ret
@@ -830,6 +867,15 @@ def run_nsga3_optimization(
     seed: int = 42,
     verbose: bool = True,
 ) -> dict:
+    # Reproducibility: PYTHONHASHSEED process başında set edilmeli (etkili
+    # olması için start_celery.sh / start_django.sh wrapper'larını kullan).
+    # Aşağıdaki satır mevcut process'in hash seed'ini değiştirmez, sadece
+    # child process'lere işaret eder; asıl deterministiklik garantisi
+    # NumpyDuplicateElimination + numpy/random seed reset ile sağlanıyor.
+    os.environ['PYTHONHASHSEED'] = '0'
+    random.seed(seed)
+    np.random.seed(seed)
+
     print("\n" + "="*62)
     print("  NSGA-III Kripto Portföy Optimizasyonu")
     print(f"  Varlık sayısı : {len(returns_df.columns)}")
@@ -860,7 +906,7 @@ def run_nsga3_optimization(
         sampling=FloatRandomSampling(),
         crossover=SBX(prob=0.9, eta=15),
         mutation=PM(prob=1.0 / problem.n_var, eta=20),
-        eliminate_duplicates=True,
+        eliminate_duplicates=NumpyDuplicateElimination(),
     )
 
     res = minimize(
@@ -870,6 +916,12 @@ def run_nsga3_optimization(
 
     X_opt = res.X
     F_opt = res.F
+    if X_opt is None or len(X_opt) == 0:
+        raise RuntimeError(
+            "NSGA-III feasible çözüm bulamadı. "
+            "Kısıtları gevşetin: max_weight artırın, "
+            "min_assets azaltın veya n_gen artırın."
+        )
     pareto_weights = X_opt / (X_opt.sum(axis=1, keepdims=True) + 1e-12)
 
     print(f"\n  Pareto-optimal çözüm sayısı: {len(pareto_weights)}")
@@ -902,32 +954,37 @@ def select_portfolio_strategies(
         4. Max Return   — en agresif
         5. Balanced     — ideal noktaya en yakın (ortalama)
 
-    Tie-break: Her strateji Pareto cephesinden FARKLI bir nokta seçer; daha
-    önce sahiplenilen indeksler maskelenir. Bu, küçük cephelerde (ör. uç
-    noktanın hem max_return hem max_sortino için optimal olduğu durumda)
-    iki stratejinin aynı portföye düşmesini önler. Cephede 5'ten az nokta
-    varsa zorunlu paylaşım olur (global best'e geri düşülür).
+    Tie-break: Her seçimde önce hiç sahiplenilmemiş indeksler arasından, hepsi
+    sahiplenilmişse en az kez seçilenler arasından en iyi skor seçilir. Cephe
+    ≥5 noktaysa 5 benzersiz strateji çıkar; <5 noktaysa zorunlu paylaşım
+    minimum tekrarla yapılır ve tekrarlı stratejiler `is_duplicate=True`
+    bayrağıyla işaretlenir (UI'da uyarı için).
 
     Önceliklendirme: sharpe → min_cvar → max_return → max_sortino → balanced.
-    Çakışma durumunda sortino ve balanced bir sonraki en iyi noktaya kayar.
     """
     mean_ret = returns_df.mean().values
     cov_mat  = returns_df.cov().values
     ret_mat  = returns_df.values
 
     n = len(pareto_weights)
-    claimed: set[int] = set()
+    pick_count: dict[int, int] = {i: 0 for i in range(n)}
 
-    def _pick(scores: np.ndarray, minimize: bool) -> int:
+    def _pick(scores: np.ndarray, minimize: bool) -> tuple[int, bool]:
+        """En az sahiplenilmiş indeksler arasından en iyi skoru olanı seç.
+
+        Returns (idx, is_duplicate) — is_duplicate True ise bu indeks bu
+        çağrıdan önce zaten başka bir strateji tarafından seçilmiş demektir.
+        """
         arr = np.asarray(scores, dtype=float)
-        if len(claimed) < n:
-            masked = arr.copy()
-            masked[list(claimed)] = np.inf if minimize else -np.inf
-            idx = int(np.argmin(masked) if minimize else np.argmax(masked))
+        min_count = min(pick_count.values())
+        candidates = [i for i, c in pick_count.items() if c == min_count]
+        if minimize:
+            idx = min(candidates, key=lambda i: arr[i])
         else:
-            idx = int(np.argmin(arr) if minimize else np.argmax(arr))
-        claimed.add(idx)
-        return idx
+            idx = max(candidates, key=lambda i: arr[i])
+        is_dup = pick_count[idx] > 0
+        pick_count[idx] += 1
+        return idx, is_dup
 
     # Skorları bir kez hesapla; pick sırası farklı olsa da metrikler değişmez.
     sharpes = np.array([
@@ -945,43 +1002,48 @@ def select_portfolio_strategies(
     dists  = np.linalg.norm(F_norm, axis=1)
 
     # Önceliklendirilmiş seçim (claim sırası).
-    sharpe_idx     = _pick(sharpes,         minimize=False)
-    min_cvar_idx   = _pick(pareto_F[:, 1],  minimize=True)
-    max_return_idx = _pick(pareto_F[:, 0],  minimize=True)
-    sortino_idx    = _pick(sortinos_finite, minimize=False)
-    balanced_idx   = _pick(dists,           minimize=True)
+    sharpe_idx,     sharpe_dup     = _pick(sharpes,         minimize=False)
+    min_cvar_idx,   min_cvar_dup   = _pick(pareto_F[:, 1],  minimize=True)
+    max_return_idx, max_return_dup = _pick(pareto_F[:, 0],  minimize=True)
+    sortino_idx,    sortino_dup    = _pick(sortinos_finite, minimize=False)
+    balanced_idx,   balanced_dup   = _pick(dists,           minimize=True)
 
     # Görüntü/insertion sırası UI ile uyumlu kalır (önceki davranış).
     strategies: dict = {
         "max_sharpe": {
-            "weights": pareto_weights[sharpe_idx],
-            "name":    "Max Sharpe",
-            "color":   "#1D9E75",
-            "marker":  "★",
+            "weights":      pareto_weights[sharpe_idx],
+            "name":         "Max Sharpe",
+            "color":        "#1D9E75",
+            "marker":       "★",
+            "is_duplicate": sharpe_dup,
         },
         "max_sortino": {
-            "weights": pareto_weights[sortino_idx],
-            "name":    "Max Sortino",
-            "color":   "#E8A33D",
-            "marker":  "✦",
+            "weights":      pareto_weights[sortino_idx],
+            "name":         "Max Sortino",
+            "color":        "#E8A33D",
+            "marker":       "✦",
+            "is_duplicate": sortino_dup,
         },
         "min_cvar": {
-            "weights": pareto_weights[min_cvar_idx],
-            "name":    "Min CVaR",
-            "color":   "#378ADD",
-            "marker":  "◆",
+            "weights":      pareto_weights[min_cvar_idx],
+            "name":         "Min CVaR",
+            "color":        "#378ADD",
+            "marker":       "◆",
+            "is_duplicate": min_cvar_dup,
         },
         "max_return": {
-            "weights": pareto_weights[max_return_idx],
-            "name":    "Max Return",
-            "color":   "#D85A30",
-            "marker":  "▲",
+            "weights":      pareto_weights[max_return_idx],
+            "name":         "Max Return",
+            "color":        "#D85A30",
+            "marker":       "▲",
+            "is_duplicate": max_return_dup,
         },
         "balanced": {
-            "weights": pareto_weights[balanced_idx],
-            "name":    "Balanced",
-            "color":   "#7F77DD",
-            "marker":  "●",
+            "weights":      pareto_weights[balanced_idx],
+            "name":         "Balanced",
+            "color":        "#7F77DD",
+            "marker":       "●",
+            "is_duplicate": balanced_dup,
         },
     }
 
