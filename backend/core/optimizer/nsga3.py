@@ -25,6 +25,10 @@ Kurulum:
 # 0. IMPORT
 # ─────────────────────────────────────────────
 import os
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['BLAS_NUM_THREADS'] = '1'
 import random
 import time
 import warnings
@@ -43,7 +47,14 @@ from pymoo.util.ref_dirs import get_reference_directions
 from pymoo.operators.sampling.rnd import FloatRandomSampling
 from pymoo.operators.crossover.sbx import SBX
 from pymoo.operators.mutation.pm import PM
+from pymoo.operators.selection.tournament import TournamentSelection
 from pymoo.termination import get_termination
+from pymoo.util import default_random_state
+
+try:
+    from threadpoolctl import threadpool_limits as _threadpool_limits
+except ImportError:
+    _threadpool_limits = None
 
 
 class NumpyDuplicateElimination(ElementwiseDuplicateElimination):
@@ -57,6 +68,33 @@ class NumpyDuplicateElimination(ElementwiseDuplicateElimination):
     """
     def is_equal(self, a, b):
         return np.allclose(a.X, b.X, atol=1e-8)
+
+
+@default_random_state
+def _deterministic_comp(pop, P, random_state=None, **kwargs):
+    """Deterministik tournament seçimi.
+
+    pymoo'nun built-in comp_by_cv_then_random fonksiyonu eşit CV değerli
+    infeasible çiftlerde compare() çağrısına random_state GEÇMİYOR — bu
+    sebeple her process'te yeni np.random.default_rng(None) yaratılıp
+    farklı sonuç üretiyor. Bu wrapper aynı mantığı uygular ama tüm
+    rastgele seçimlerde passed random_state kullanır.
+    """
+    S = np.full(P.shape[0], np.nan)
+    for i in range(P.shape[0]):
+        a, b = P[i, 0], P[i, 1]
+        cv_a = float(pop[a].CV[0])
+        cv_b = float(pop[b].CV[0])
+        if cv_a > 0.0 or cv_b > 0.0:
+            if cv_a < cv_b:
+                S[i] = a
+            elif cv_a > cv_b:
+                S[i] = b
+            else:
+                S[i] = random_state.choice([a, b])
+        else:
+            S[i] = random_state.choice([a, b])
+    return S[:, None].astype(int)
 
 
 # ─────────────────────────────────────────────
@@ -904,15 +942,23 @@ def run_nsga3_optimization(
         ref_dirs=ref_dirs,
         pop_size=pop_size,
         sampling=FloatRandomSampling(),
+        selection=TournamentSelection(func_comp=_deterministic_comp),
         crossover=SBX(prob=0.9, eta=15),
         mutation=PM(prob=1.0 / problem.n_var, eta=20),
         eliminate_duplicates=NumpyDuplicateElimination(),
     )
 
-    res = minimize(
-        problem, algorithm, get_termination("n_gen", n_gen),
-        seed=seed, save_history=False, verbose=verbose,
-    )
+    if _threadpool_limits is not None:
+        with _threadpool_limits(limits=1):
+            res = minimize(
+                problem, algorithm, get_termination("n_gen", n_gen),
+                seed=seed, save_history=False, verbose=verbose,
+            )
+    else:
+        res = minimize(
+            problem, algorithm, get_termination("n_gen", n_gen),
+            seed=seed, save_history=False, verbose=verbose,
+        )
 
     X_opt = res.X
     F_opt = res.F
