@@ -455,10 +455,11 @@ def load_prices_from_db_or_fetch(
                 date__lte=end_date,
             )
             .values('asset__symbol', 'date', 'close')
-            .order_by('date')
+            .order_by('date', 'asset__symbol')
         )
         df_raw  = pd.DataFrame(rows)
         prices  = df_raw.pivot(index='date', columns='asset__symbol', values='close')
+        prices  = prices[sorted(prices.columns)]
         prices.index = pd.to_datetime(prices.index)
         prices  = prices.astype(float).sort_index().ffill(limit=2).dropna(how='all')
         returns_df = prices.pct_change().dropna()

@@ -55,7 +55,7 @@ def run_portfolio_optimization(self, job_id, params):
     from .models import PortfolioJob, PortfolioResult
     from core.optimizer.nsga3 import (
         fetch_top_coins,
-        load_prices_from_yfinance,
+        load_prices_from_db_or_fetch,
         apply_sanity_filter,
         winsorize_returns,
         run_nsga3_optimization,
@@ -108,12 +108,10 @@ def run_portfolio_optimization(self, job_id, params):
         symbols  = coins_df['symbol'].str.upper().tolist()
         logger.info(f"  {len(symbols)} coin çekildi")
 
-        # ── 2. yFinance: fiyat verisi ───────────────────────────────────────
-        logger.info("Step 2/5: Loading price data from yFinance...")
-        returns_df = load_prices_from_yfinance(
+        # ── 2. Fiyat verisi — DB önce, yfinance fallback ────────────────────
+        logger.info("Step 2/5: Loading price data (DB-first, yfinance fallback)...")
+        returns_df = load_prices_from_db_or_fetch(
             symbols=symbols,
-            start=start_date,
-            end=end_date,
             lookback_days=lookback,
         )
         logger.info(f"  {len(returns_df.columns)} coin için veri yüklendi, {len(returns_df)} gün")

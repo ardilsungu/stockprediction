@@ -1,7 +1,8 @@
 import pytest
+import numpy as np
 import pandas as pd
 import requests
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from django.urls import reverse
 from rest_framework.test import APIClient
 from users.models import User
@@ -146,6 +147,43 @@ class TestPortfolioJobDataSource:
         assert field.default == 'coingecko'
         choices_keys = [k for k, _ in field.choices]
         assert set(choices_keys) == {'coingecko', 'fallback', 'cache'}
+
+
+@pytest.mark.django_db
+class TestTaskUsesDbPath:
+    def test_task_calls_db_or_fetch_not_yfinance(self, user):
+        """tasks.py load_prices_from_db_or_fetch çağırmalı, yfinance'i doğrudan çağırmamalı."""
+        job = PortfolioJob.objects.create(user=user, params={})
+
+        mock_returns = pd.DataFrame(
+            {'BTC': [0.01, -0.02] * 30, 'ETH': [0.02, -0.01] * 30},
+            index=pd.date_range('2024-01-01', periods=60),
+        )
+        mock_opt = {
+            'pareto_weights': np.array([[0.5, 0.5]]),
+            'pareto_F':       np.array([[0.1, 0.05]]),
+            'tickers':        ['BTC', 'ETH'],
+            'res':            MagicMock(),
+            'problem':        MagicMock(),
+        }
+
+        with patch('core.optimizer.nsga3.fetch_top_coins',
+                   return_value=_MINIMAL_COINS_DF), \
+             patch('core.optimizer.nsga3.load_prices_from_db_or_fetch',
+                   return_value=mock_returns) as mock_db_fetch, \
+             patch('core.optimizer.nsga3.load_prices_from_yfinance') as mock_yf, \
+             patch('core.optimizer.nsga3.apply_sanity_filter',
+                   return_value=mock_returns), \
+             patch('core.optimizer.nsga3.winsorize_returns',
+                   return_value=mock_returns), \
+             patch('core.optimizer.nsga3.run_nsga3_optimization',
+                   return_value=mock_opt), \
+             patch('core.optimizer.nsga3.select_portfolio_strategies',
+                   return_value={}):
+            run_portfolio_optimization.apply(args=[str(job.id), {}])
+
+        mock_db_fetch.assert_called_once()
+        mock_yf.assert_not_called()
 
 
 @pytest.mark.django_db

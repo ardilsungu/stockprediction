@@ -1,4 +1,5 @@
 import datetime
+import numpy as np
 import pandas as pd
 import pytest
 from unittest.mock import patch, MagicMock
@@ -87,3 +88,61 @@ class TestLoadPricesFromDbOrFetch:
 
         assert isinstance(result, pd.DataFrame)
         assert not result.empty
+
+
+@pytest.mark.django_db
+class TestDbPathDeterminism:
+    """DB yolunda sütun sırası deterministik olmalı."""
+
+    def _create_prices(self, symbols, n_days=400):
+        from assets.models import Asset, Price as PriceModel
+        today = datetime.date.today()
+        for symbol in symbols:
+            asset = Asset.objects.create(symbol=symbol, name=symbol, is_active=True)
+            for i in range(n_days):
+                PriceModel.objects.create(
+                    asset=asset,
+                    date=today - datetime.timedelta(days=n_days - i),
+                    open=100, high=110, low=90,
+                    close=100.0 + i * 0.1,
+                )
+
+    def test_column_order_is_reproducible(self, db):
+        # İki ardışık çağrı aynı sütun sırasını döndürmeli
+        symbols = ['SOL', 'BTC', 'ETH']
+        self._create_prices(symbols)
+        df1 = load_prices_from_db_or_fetch(symbols, lookback_days=365)
+        df2 = load_prices_from_db_or_fetch(symbols, lookback_days=365)
+        assert list(df1.columns) == list(df2.columns)
+
+    def test_columns_are_alphabetically_sorted(self, db):
+        # DB yolu: sütunlar her zaman alfabetik sırada olmalı
+        symbols = ['SOL', 'BTC', 'ETH']
+        self._create_prices(symbols)
+        df = load_prices_from_db_or_fetch(symbols, lookback_days=365)
+        assert list(df.columns) == sorted(df.columns)
+
+    def test_non_alpha_input_order_gives_sorted_columns(self, db):
+        # Girdi ters alfabetik olsa bile çıktı sıralı olmalı
+        # (order_by + sorted(prices.columns) her ikisini de doğrular)
+        symbols = ['XRP', 'ADA', 'BTC']
+        self._create_prices(symbols)
+        df = load_prices_from_db_or_fetch(symbols, lookback_days=365)
+        assert list(df.columns) == sorted(df.columns)
+        for s in symbols:
+            assert s in df.columns
+
+    def test_seed_determinism_with_sorted_columns(self, db):
+        # Aynı seed ile üretilen ağırlıklar, iki çalışmada aynı varlığa eşlenmeli
+        symbols = ['SOL', 'ETH', 'BTC']
+        self._create_prices(symbols)
+        df1 = load_prices_from_db_or_fetch(symbols, lookback_days=365)
+        df2 = load_prices_from_db_or_fetch(symbols, lookback_days=365)
+        assert list(df1.columns) == list(df2.columns), "Sütun sırası farklı"
+        np.random.seed(42)
+        w1 = np.random.dirichlet(np.ones(len(df1.columns)))
+        np.random.seed(42)
+        w2 = np.random.dirichlet(np.ones(len(df2.columns)))
+        for i, (col1, col2) in enumerate(zip(df1.columns, df2.columns)):
+            assert col1 == col2
+            assert abs(w1[i] - w2[i]) < 1e-12
