@@ -1,4 +1,8 @@
+import pandas as pd
 import pytest
+from io import StringIO
+from unittest.mock import patch, MagicMock
+from django.core.management import call_command
 from django.db import models as django_models
 from django.urls import reverse
 from rest_framework.test import APIClient
@@ -138,3 +142,37 @@ class TestPriceModelFields:
         )
         assert price.source == 'yfinance'
         assert price.fetched_at is not None
+
+
+@pytest.mark.django_db
+class TestFetchPricesCommand:
+    def test_command_no_assets(self, db):
+        Asset.objects.filter(is_active=True).delete()
+        out = StringIO()
+        call_command('fetch_prices', stdout=out)
+        assert 'ERROR' not in out.getvalue()
+
+    def test_command_skips_asset_on_error(self, db):
+        Asset.objects.create(symbol='BTC', name='Bitcoin', is_active=True)
+        Asset.objects.create(symbol='ETH', name='Ethereum', is_active=True)
+        out = StringIO()
+        with patch(
+            'assets.management.commands.fetch_prices.yf.Ticker',
+            side_effect=Exception('network error'),
+        ):
+            call_command('fetch_prices', stdout=out)
+        output = out.getvalue()
+        assert 'HATA' in output
+        assert 'Tamamlandı' in output
+
+    def test_command_warns_on_empty_data(self, db):
+        Asset.objects.create(symbol='BTC', name='Bitcoin', is_active=True)
+        out = StringIO()
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = pd.DataFrame()
+        with patch(
+            'assets.management.commands.fetch_prices.yf.Ticker',
+            return_value=mock_ticker,
+        ):
+            call_command('fetch_prices', stdout=out)
+        assert 'WARNING' in out.getvalue()
