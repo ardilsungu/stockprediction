@@ -290,6 +290,7 @@ def fetch_top_coins(
 
     url = "https://api.coingecko.com/api/v3/coins/markets"
     all_coins = []
+    had_errors = False
     per_page = min(250, n_target)
     n_pages = int(np.ceil(n_target / per_page))
 
@@ -319,20 +320,37 @@ def fetch_top_coins(
                 if page < n_pages:
                     time.sleep(1.5)   # rate-limit nefesi (ücretsiz plan ~30 req/dk)
                 break
-            except Exception as e:
-                wait = 2 ** attempt   # 1, 2, 4 saniye
+            except (
+                requests.exceptions.SSLError,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+            ) as e:
+                wait = 2 ** attempt
                 if attempt < max_retries - 1:
                     print(f"  [Sayfa {page} deneme {attempt+1}/{max_retries}] "
-                          f"{type(e).__name__}: {e}  →  {wait}s bekle")
+                          f"Ağ hatası {type(e).__name__}: {e}  →  {wait}s bekle")
                     time.sleep(wait)
                 else:
-                    print(f"  [Uyarı] Sayfa {page} kesin başarısız: {e}")
+                    print(f"  [Uyarı] Sayfa {page} ağ hatası, fallback'e düşülecek: {e}")
+            except requests.exceptions.HTTPError as e:
+                wait = 2 ** attempt
+                if attempt < max_retries - 1:
+                    print(f"  [Sayfa {page} deneme {attempt+1}/{max_retries}] "
+                          f"HTTP hatası {e.response.status_code}: {e}  →  {wait}s bekle")
+                    time.sleep(wait)
+                else:
+                    print(f"  [Uyarı] Sayfa {page} HTTP hatası, fallback'e düşülecek: {e}")
+            except Exception as e:
+                print(f"  [Hata] Sayfa {page} beklenmeyen hata: {type(e).__name__}: {e}")
 
         if not success:
+            had_errors = True
             continue
 
     # ── FALLBACK: CoinGecko'ya erişilemezse bilinen top-100'ü kullan ──
-    if len(all_coins) == 0:
+    # Kısmi hata (bazı sayfalar başarısız) durumunda da tutarsız veri yerine
+    # bilinen sabit listeyi kullanmak daha güvenlidir.
+    if len(all_coins) == 0 or had_errors:
         print(f"\n[CoinGecko] ⚠ API'ye erişilemedi. FALLBACK listesi kullanılıyor.")
         print(f"  (İnternet/rate-limit problemi olabilir — daha sonra tekrar deneyin)")
         all_coins = _get_fallback_coin_list()
