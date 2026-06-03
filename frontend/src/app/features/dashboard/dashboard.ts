@@ -1,6 +1,6 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { Router, RouterLink } from '@angular/router';
+import { Router, RouterLink, ActivatedRoute } from '@angular/router';
 import { AuthService } from '../../core/services/auth';
 import { PortfolioService } from '../../core/services/portfolio';
 
@@ -17,21 +17,25 @@ export class Dashboard implements OnInit {
   loading = true;
 
   constructor(
+    private route: ActivatedRoute,
     private authService: AuthService,
     private portfolioService: PortfolioService,
     private router: Router,
   ) {}
 
   ngOnInit(): void {
-    this.authService.getProfile().subscribe({
-      next: (p) => (this.profile = p),
-    });
-    this.portfolioService.getJobs().subscribe({
-      next: (jobs) => {
-        this.recentJobs = jobs;
-        this.loading = false;
-      },
-      error: () => (this.loading = false),
+    this.route.url.subscribe(() => {
+      this.loading = true;
+      this.authService.getProfile().subscribe({
+        next: (p) => (this.profile = p),
+      });
+      this.portfolioService.getJobs().subscribe({
+        next: (jobs) => {
+          this.recentJobs = jobs;
+          this.loading = false;
+        },
+        error: () => (this.loading = false),
+      });
     });
   }
 
