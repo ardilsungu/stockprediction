@@ -209,14 +209,14 @@ def run_portfolio_optimization(self, job_id, params):
         raise
 
     except (
+        requests.exceptions.SSLError,
         requests.exceptions.ConnectionError,
         requests.exceptions.Timeout,
         requests.exceptions.HTTPError,
         redis.exceptions.ConnectionError,
     ) as exc:
-        logger.warning(f"Transient error, retrying: job_id={job_id}, error={exc}")
-        _mark_failed(job_id)
-        raise self.retry(exc=exc, countdown=5, max_retries=3)
+        logger.warning(f"Bağlantı hatası (retry yapılacak): job_id={job_id}, error={exc}")
+        raise self.retry(exc=exc, countdown=60, max_retries=3)
 
     except (ValueError, KeyError, TypeError) as exc:
         logger.error(f"Non-retryable error: job_id={job_id}, error={exc}")
