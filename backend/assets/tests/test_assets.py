@@ -1,8 +1,9 @@
 import pytest
+from django.db import models as django_models
 from django.urls import reverse
 from rest_framework.test import APIClient
 from users.models import User
-from assets.models import Asset, Watchlist
+from assets.models import Asset, Price, Watchlist
 
 
 @pytest.fixture
@@ -104,3 +105,36 @@ class TestWatchlist:
         entry = Watchlist.objects.create(user=other_user, asset=asset)
         response = auth_client.delete(reverse('watchlist_delete', kwargs={'pk': entry.id}))
         assert response.status_code == 404
+
+
+class TestPriceModelFields:
+    def test_price_model_has_source_field(self):
+        field = Price._meta.get_field('source')
+        assert isinstance(field, django_models.CharField)
+        assert field.default == 'yfinance'
+
+    def test_price_model_has_fetched_at_field(self):
+        field = Price._meta.get_field('fetched_at')
+        assert isinstance(field, django_models.DateTimeField)
+        assert field.editable is False
+
+    def test_price_model_has_index(self):
+        index_fields = [
+            tuple(idx.fields) for idx in Price._meta.indexes
+        ]
+        assert ('asset', 'date') in index_fields
+
+    @pytest.mark.django_db
+    def test_price_object_creation(self, asset):
+        import datetime
+        price = Price.objects.create(
+            asset=asset,
+            date=datetime.date(2025, 1, 1),
+            open=50000,
+            high=51000,
+            low=49000,
+            close=50500,
+            volume=1000000,
+        )
+        assert price.source == 'yfinance'
+        assert price.fetched_at is not None

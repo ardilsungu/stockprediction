@@ -1,5 +1,6 @@
 import uuid
 from django.db import models
+from django.utils import timezone
 from users.models import User
 
 
@@ -30,12 +31,17 @@ class Price(models.Model):
     high = models.DecimalField(max_digits=20, decimal_places=8)
     low = models.DecimalField(max_digits=20, decimal_places=8)
     close = models.DecimalField(max_digits=20, decimal_places=8)
-    volume = models.BigIntegerField(null=True, blank=True)
+    volume     = models.BigIntegerField(null=True, blank=True)
+    source     = models.CharField(max_length=20, default='yfinance')
+    fetched_at = models.DateTimeField(default=timezone.now, editable=False)
 
     class Meta:
         db_table = 'prices'
         unique_together = ('asset', 'date')
         ordering = ['-date']
+        indexes = [
+            models.Index(fields=['asset', 'date']),
+        ]
 
     def __str__(self):
         return f"{self.asset.symbol} - {self.date}"
