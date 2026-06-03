@@ -1,7 +1,9 @@
+import datetime
 import pandas as pd
 import pytest
 from io import StringIO
 from unittest.mock import patch, MagicMock
+from django.conf import settings
 from django.core.management import call_command
 from django.db import models as django_models
 from django.urls import reverse
@@ -176,3 +178,52 @@ class TestFetchPricesCommand:
         ):
             call_command('fetch_prices', stdout=out)
         assert 'WARNING' in out.getvalue()
+
+
+def _make_price_df(date=None):
+    if date is None:
+        date = datetime.date.today() - datetime.timedelta(days=1)
+    idx = pd.DatetimeIndex([pd.Timestamp(date)])
+    return pd.DataFrame(
+        {'Open': [100.0], 'High': [110.0], 'Low': [90.0], 'Close': [105.0], 'Volume': [1000]},
+        index=idx,
+    )
+
+
+@pytest.mark.django_db
+class TestDailyPriceSnapshot:
+    def test_snapshot_saves_price(self, db):
+        asset = Asset.objects.create(symbol='BTC', name='Bitcoin', is_active=True)
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = _make_price_df()
+        with patch('assets.tasks.yf.Ticker', return_value=mock_ticker):
+            from assets.tasks import daily_price_snapshot
+            result = daily_price_snapshot()
+        assert result['saved'] == 1
+        assert result['skipped'] == 0
+        assert Price.objects.filter(asset=asset).count() == 1
+
+    def test_snapshot_skips_on_empty_df(self, db):
+        Asset.objects.create(symbol='BTC', name='Bitcoin', is_active=True)
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = pd.DataFrame()
+        with patch('assets.tasks.yf.Ticker', return_value=mock_ticker):
+            from assets.tasks import daily_price_snapshot
+            result = daily_price_snapshot()
+        assert result['saved'] == 0
+        assert result['skipped'] == 1
+        assert Price.objects.count() == 0
+
+    def test_snapshot_continues_on_error(self, db):
+        Asset.objects.create(symbol='BTC', name='Bitcoin', is_active=True)
+        Asset.objects.create(symbol='ETH', name='Ethereum', is_active=True)
+        with patch('assets.tasks.yf.Ticker', side_effect=Exception('network')):
+            from assets.tasks import daily_price_snapshot
+            result = daily_price_snapshot()
+        assert result['skipped'] == 2
+        assert Price.objects.count() == 0
+
+    def test_beat_schedule_configured(self):
+        assert 'daily-price-snapshot' in settings.CELERY_BEAT_SCHEDULE
+        task_cfg = settings.CELERY_BEAT_SCHEDULE['daily-price-snapshot']
+        assert task_cfg['task'] == 'assets.tasks.daily_price_snapshot'
