@@ -400,8 +400,91 @@ def fetch_top_coins(
 
 
 # ─────────────────────────────────────────────
-# 3. YFINANCE İLE FİYAT VERİSİ
+# 3. FİYAT VERİSİ: DB ÖNCE, YFINANCE FALLBACK
 # ─────────────────────────────────────────────
+
+def load_prices_from_db_or_fetch(
+    symbols: list,
+    lookback_days: int = 500,
+    min_lookback_days: int = 250,
+) -> pd.DataFrame:
+    """
+    Önce DB'yi kontrol eder. Tüm sembollerin beklenen kaydın %80'i DB'de mevcutsa
+    DB'den okur ve returns hesaplar. Herhangi bir sembol eksikse tüm veri seti için
+    yfinance'e düşer — bu sayede tarih hizalaması tutarlı kalır.
+
+    Parameters
+    ----------
+    symbols        : uppercase sembol listesi  (ör. ['BTC', 'ETH'])
+    lookback_days  : arka planda bakılacak gün sayısı
+    min_lookback_days : hizalama sırasında minimum pencere
+    """
+    import datetime
+    from assets.models import Asset, Price
+
+    end_date   = datetime.date.today() - datetime.timedelta(days=1)
+    start_date = end_date - datetime.timedelta(days=lookback_days + 30)
+    # Hafta sonları çıkarılınca beklenen işlem günü yaklaşımı
+    expected_rows = int(lookback_days * 5 / 7 * 0.8)
+
+    db_missing = []
+    for symbol in symbols:
+        try:
+            asset = Asset.objects.get(symbol=symbol)
+            count = Price.objects.filter(
+                asset=asset,
+                date__gte=start_date,
+                date__lte=end_date,
+            ).count()
+            if count < expected_rows:
+                print(f"[DB] {symbol}: {count}/{expected_rows} kayıt — yetersiz.")
+                db_missing.append(symbol)
+        except Asset.DoesNotExist:
+            print(f"[DB] {symbol}: Asset kaydı yok.")
+            db_missing.append(symbol)
+
+    # Tüm semboller DB'de yeterliyse → DB'den oku
+    if not db_missing:
+        print(f"[DB] Tüm {len(symbols)} sembol DB'den okunuyor "
+              f"({start_date} → {end_date})...")
+        rows = list(
+            Price.objects
+            .filter(
+                asset__symbol__in=symbols,
+                date__gte=start_date,
+                date__lte=end_date,
+            )
+            .values('asset__symbol', 'date', 'close')
+            .order_by('date', 'asset__symbol')
+        )
+        df_raw  = pd.DataFrame(rows)
+        prices  = df_raw.pivot(index='date', columns='asset__symbol', values='close')
+        prices  = prices[sorted(prices.columns)]
+        prices.index = pd.to_datetime(prices.index)
+        prices  = prices.astype(float).sort_index().ffill(limit=2).dropna(how='all')
+        returns_df = prices.pct_change().dropna()
+
+        if len(returns_df) >= 50:
+            print(f"[DB] ✓ {len(returns_df.columns)} coin, {len(returns_df)} gözlem "
+                  f"(pencere {lookback_days}g)")
+            return returns_df
+
+        print("[DB] DB verisi yetersiz gözlem (<50), yfinance'e düşülüyor...")
+    else:
+        print(f"[DB] {len(db_missing)} sembol eksik, yfinance kullanılıyor...")
+
+    # yfinance fallback
+    end_str   = end_date.strftime('%Y-%m-%d')
+    start_str = start_date.strftime('%Y-%m-%d')
+    print(f"[yfinance] {len(symbols)} sembol için {start_str} → {end_str} çekiliyor...")
+    return load_prices_from_yfinance(
+        symbols,
+        start=start_str,
+        end=end_str,
+        lookback_days=lookback_days,
+        min_lookback_days=min_lookback_days,
+    )
+
 
 def load_prices_from_yfinance(
     symbols: list,
@@ -1423,11 +1506,9 @@ def main(
 
     symbols = top_coins_df["symbol"].tolist()
 
-    # ── B) Fiyat verisi ───────────────────────────────────────────────
-    returns_df = load_prices_from_yfinance(
+    # ── B) Fiyat verisi — DB önce, yfinance fallback ─────────────────
+    returns_df = load_prices_from_db_or_fetch(
         symbols,
-        start="2022-01-01",
-        end="2025-12-31",
         lookback_days=750,
         min_lookback_days=400,
     )

@@ -21,6 +21,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
+    'django_celery_beat',
     'django_celery_results',
     # Local apps
     'users',
@@ -132,3 +133,13 @@ SIMPLE_JWT = {
 CELERY_BROKER_URL = config('REDIS_URL')
 CELERY_RESULT_BACKEND = 'django-db'
 CELERY_CACHE_BACKEND = 'django-cache'
+
+# Celery Beat
+from celery.schedules import crontab
+
+CELERY_BEAT_SCHEDULE = {
+    'daily-price-snapshot': {
+        'task': 'assets.tasks.daily_price_snapshot',
+        'schedule': crontab(hour=0, minute=30),
+    },
+}
