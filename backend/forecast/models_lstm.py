@@ -43,13 +43,19 @@ def run_lstm_forecast(asset: Asset, horizon_days: int = 30) -> dict:
         mae: float
         rmse: float
     """
+    if not 1 <= horizon_days <= 365:
+        raise ValueError(f"horizon_days 1-365 arasında olmalı, verilen: {horizon_days}")
+
+    tf.keras.backend.clear_session()
+    tf.keras.utils.set_random_seed(42)
+
     # 1. Veriyi DB'den çek
-    prices = Price.objects.filter(
+    prices = list(Price.objects.filter(
         asset=asset,
         date__gte=date.today() - timedelta(days=730)
-    ).order_by('date').values_list('close', flat=True)
+    ).order_by('date').values_list('date', 'close'))
 
-    data = np.array([float(p) for p in prices]).reshape(-1, 1)
+    data = np.array([float(close) for _, close in prices]).reshape(-1, 1)
 
     if len(data) < LOOKBACK + 50:
         raise ValueError(f"{asset.symbol} için yeterli veri yok. "
@@ -104,7 +110,7 @@ def run_lstm_forecast(asset: Asset, horizon_days: int = 30) -> dict:
     rmse = float(np.sqrt(((y_pred_inv - y_test_inv) ** 2).mean()))
 
     # 8. Tarihleri ekle
-    last_date = Price.objects.filter(asset=asset).order_by('-date').first().date
+    last_date = prices[-1][0]
     predictions = [
         {
             'date': (last_date + timedelta(days=i+1)).strftime('%Y-%m-%d'),

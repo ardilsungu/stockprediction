@@ -121,7 +121,7 @@ class Command(BaseCommand):
                     high=row['High'],
                     low=row['Low'],
                     close=row['Close'],
-                    volume=int(row['Volume']) if row['Volume'] else None,
+                    volume=int(row['Volume']) if pd.notna(row['Volume']) else None,
                     source='yfinance',
                     fetched_at=timezone.now(),
                 )

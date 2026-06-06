@@ -1,12 +1,10 @@
 from celery import shared_task
 from .models import ForecastJob, ForecastResult
-from .models_prophet import run_prophet_forecast
-from .models_lstm import run_lstm_forecast
 import logging
 
 logger = logging.getLogger(__name__)
 
-@shared_task(bind=True, soft_time_limit=600, time_limit=660)
+@shared_task(bind=True, soft_time_limit=600)
 def run_forecast_task(self, job_id: str):
     """
     ForecastJob'u alır, model_type'a göre Prophet veya LSTM çalıştırır,
@@ -24,8 +22,10 @@ def run_forecast_task(self, job_id: str):
 
     try:
         if job.model_type == 'prophet':
+            from .models_prophet import run_prophet_forecast
             result = run_prophet_forecast(job.asset, job.horizon_days)
         elif job.model_type == 'lstm':
+            from .models_lstm import run_lstm_forecast
             result = run_lstm_forecast(job.asset, job.horizon_days)
         else:
             raise ValueError(f"Bilinmeyen model_type: {job.model_type}")
@@ -44,7 +44,7 @@ def run_forecast_task(self, job_id: str):
     except Exception as e:
         job.status = 'failed'
         job.error_message = str(e)
-        logger.error(f"ForecastJob basarisiz: {job_id}, hata: {e}")
+        logger.exception(f"ForecastJob basarisiz: {job_id}, hata: {e}")
 
     finally:
         job.save()

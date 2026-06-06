@@ -24,6 +24,9 @@ def run_prophet_forecast(asset: Asset, horizon_days: int = 30) -> dict:
         mae: float
         rmse: float
     """
+    if not 1 <= horizon_days <= 365:
+        raise ValueError(f"horizon_days 1-365 arasında olmalı, verilen: {horizon_days}")
+
     # 1. Veriyi DB'den çek
     prices = Price.objects.filter(
         asset=asset,
