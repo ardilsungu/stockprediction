@@ -91,3 +91,33 @@ export interface PortfolioResult {
 export interface PortfolioJobDetail extends PortfolioJob {
   result?: PortfolioResult;
 }
+
+export interface ForecastPrediction {
+  date: string;
+  predicted: number;
+  lower_ci: number;
+  upper_ci: number;
+}
+
+export interface ForecastResult {
+  predictions: ForecastPrediction[];
+  mae: number;
+  rmse: number;
+  created_at: string;
+}
+
+export interface ForecastJob {
+  id: string;
+  asset: string;
+  asset_symbol: string;
+  model_type: 'prophet' | 'lstm';
+  horizon_days: number;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  error_message: string;
+  celery_task_id: string;
+  created_at: string;
+}
+
+export interface ForecastJobDetail extends ForecastJob {
+  result?: ForecastResult;
+}
