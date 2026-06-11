@@ -133,6 +133,33 @@
   font-variant-numeric: tabular-nums;
 }
 
+.chart-wrapper { position: relative; }
+.chart-container { width: 100%; height: 400px; }
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+.legend-line {
+  display: inline-block;
+  width: 18px;
+  height: 0;
+  border-top: 2px solid;
+
+  &.history   { border-color: #94a3b8; }
+  &.predicted { border-color: #6366f1; }
+  &.ci        { border-color: rgba(99,102,241,0.5); border-top-style: dashed; }
+}
+
 .table-wrapper { overflow-x: auto; }
 .result-table {
   width: 100%;

@@ -79,6 +79,18 @@
         </div>
       </div>
 
+      <div class="card mb-24">
+        <h2 class="card-title">Geçmiş Fiyat & Tahmin</h2>
+        <div class="chart-legend">
+          <span class="legend-item"><span class="legend-line history"></span> Geçmiş (30 gün)</span>
+          <span class="legend-item"><span class="legend-line predicted"></span> Tahmin</span>
+          <span class="legend-item"><span class="legend-line ci"></span> Güven aralığı</span>
+        </div>
+        <div class="chart-wrapper">
+          <div #chartContainer class="chart-container"></div>
+        </div>
+      </div>
+
       <div class="card">
         <h2 class="card-title">Tahminler ({{ result.predictions.length }} gün)</h2>
         <div class="table-wrapper">

@@ -35,6 +35,11 @@ export interface WatchlistItem {
   added_at: string;
 }
 
+export interface PricePoint {
+  date: string;
+  close: number;
+}
+
 export type PortfolioJobStatus = 'pending' | 'running' | 'completed' | 'failed';
 
 export interface PortfolioJobParams {

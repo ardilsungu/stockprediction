@@ -2,7 +2,7 @@ import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { environment } from '../../../environments/environment';
-import { Asset, WatchlistItem } from '../models';
+import { Asset, PricePoint, WatchlistItem } from '../models';
 
 @Injectable({ providedIn: 'root' })
 export class AssetService {
@@ -24,5 +24,9 @@ export class AssetService {
 
   removeFromWatchlist(id: string): Observable<void> {
     return this.http.delete<void>(`${this.base}/watchlist/${id}/`);
+  }
+
+  getPriceHistory(symbol: string, days = 30): Observable<PricePoint[]> {
+    return this.http.get<PricePoint[]>(`${this.base}/${symbol}/prices/`, { params: { days } });
   }
 }
