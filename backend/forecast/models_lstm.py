@@ -9,7 +9,7 @@ from assets.models import Asset, Price
 from datetime import date, timedelta
 import logging
 
-from .data_split import chronological_split_indices
+from .data_split import chronological_split_indices, naive_baseline_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +44,11 @@ def run_lstm_forecast(asset: Asset, horizon_days: int = 30) -> dict:
 
     Returns
     -------
-    dict : {predictions, mae, rmse}
+    dict : {predictions, mae, rmse, baseline_mae, baseline_rmse}
         predictions: [{date, predicted, lower_ci, upper_ci}]
-        mae: float
-        rmse: float
+        mae, rmse: float — modelin test seti metrikleri
+        baseline_mae, baseline_rmse: float — aynı test setinde naive
+            persistence (yarın=bugün) baseline metrikleri
     """
     if not 1 <= horizon_days <= 365:
         raise ValueError(f"horizon_days 1-365 arasında olmalı, verilen: {horizon_days}")
@@ -118,6 +119,13 @@ def run_lstm_forecast(asset: Asset, horizon_days: int = 30) -> dict:
     mae = float(np.abs(y_pred_inv - y_test_inv).mean())
     rmse = float(np.sqrt(((y_pred_inv - y_test_inv) ** 2).mean()))
 
+    # Naive persistence baseline: aynı test günleri için tahmin = bir önceki
+    # günün gerçek fiyatı. y[j], data[LOOKBACK + j]'ye karşılık geldiğinden
+    # test seti data'da LOOKBACK + val_end'de başlar; orijinal fiyat
+    # ölçeğinde hesaplanır ki modelin MAE/RMSE'siyle aynı birimde olsun.
+    baseline_mae, baseline_rmse = naive_baseline_metrics(
+        data.flatten(), LOOKBACK + val_end)
+
     # 8. Tarihleri ekle
     last_date = prices[-1][0]
     predictions = [
@@ -133,4 +141,10 @@ def run_lstm_forecast(asset: Asset, horizon_days: int = 30) -> dict:
     logger.info(f"LSTM forecast tamamlandi: {asset.symbol}, "
                f"horizon={horizon_days}, MAE={mae:.4f}, RMSE={rmse:.4f}")
 
-    return {'predictions': predictions, 'mae': mae, 'rmse': rmse}
+    return {
+        'predictions': predictions,
+        'mae': mae,
+        'rmse': rmse,
+        'baseline_mae': baseline_mae,
+        'baseline_rmse': baseline_rmse,
+    }

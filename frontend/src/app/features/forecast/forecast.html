@@ -76,7 +76,16 @@
             <span class="metric-label">RMSE</span>
             <span class="metric-value">{{ result.rmse | number:'1.2-2' }}</span>
           </div>
+          <div class="metric-card">
+            <span class="metric-label">Baseline MAE (naive)</span>
+            <span class="metric-value">{{ result.predictions.baseline.mae | number:'1.2-2' }}</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Baseline RMSE (naive)</span>
+            <span class="metric-value">{{ result.predictions.baseline.rmse | number:'1.2-2' }}</span>
+          </div>
         </div>
+        <p class="muted mt-8">Baseline: naive persistence (yarın = bugün) — model, aynı test döneminde bu değerlerin altında kalmalı.</p>
       </div>
 
       <div class="card mb-24">
@@ -92,7 +101,7 @@
       </div>
 
       <div class="card">
-        <h2 class="card-title">Tahminler ({{ result.predictions.length }} gün)</h2>
+        <h2 class="card-title">Tahminler ({{ result.predictions.points.length }} gün)</h2>
         <div class="table-wrapper">
           <table class="result-table">
             <thead>
@@ -104,7 +113,7 @@
               </tr>
             </thead>
             <tbody>
-              @for (p of result.predictions; track p.date) {
+              @for (p of result.predictions.points; track p.date) {
                 <tr>
                   <td>{{ p.date }}</td>
                   <td class="strategy-name">{{ p.predicted | number:'1.2-2' }}</td>

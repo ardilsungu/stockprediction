@@ -5,6 +5,8 @@ from assets.models import Asset, Price
 from datetime import date, timedelta
 import logging
 
+from .data_split import naive_baseline_metrics
+
 logger = logging.getLogger(__name__)
 
 # Son %20'lik kronolojik holdout MAE/RMSE için ayrılır; 90 günlük minimumla
@@ -33,10 +35,11 @@ def run_prophet_forecast(asset: Asset, horizon_days: int = 30) -> dict:
 
     Returns
     -------
-    dict : {predictions, mae, rmse}
+    dict : {predictions, mae, rmse, baseline_mae, baseline_rmse}
         predictions: [{date, predicted, lower_ci, upper_ci}]
-        mae: float
-        rmse: float
+        mae, rmse: float — modelin holdout metrikleri
+        baseline_mae, baseline_rmse: float — aynı holdout döneminde naive
+            persistence (yarın=bugün) baseline metrikleri
     """
     if not 1 <= horizon_days <= 365:
         raise ValueError(f"horizon_days 1-365 arasında olmalı, verilen: {horizon_days}")
@@ -71,6 +74,11 @@ def run_prophet_forecast(asset: Asset, horizon_days: int = 30) -> dict:
     mae = float(np.abs(errors).mean())
     rmse = float(np.sqrt((errors ** 2).mean()))
 
+    # Naive persistence baseline: aynı holdout günleri için tahmin = bir
+    # önceki günün gerçek y'si (modelle aynı formül ve ölçek).
+    baseline_mae, baseline_rmse = naive_baseline_metrics(
+        df['y'].to_numpy(), len(df) - holdout_size)
+
     # 3. Kullanıcıya dönen tahminler için final modeli TÜM veriyle eğit
     model = _build_prophet_model()
     model.fit(df)
@@ -93,4 +101,10 @@ def run_prophet_forecast(asset: Asset, horizon_days: int = 30) -> dict:
     logger.info(f"Prophet forecast tamamlandı: {asset.symbol}, "
                f"horizon={horizon_days}, MAE={mae:.4f}, RMSE={rmse:.4f}")
 
-    return {'predictions': predictions, 'mae': mae, 'rmse': rmse}
+    return {
+        'predictions': predictions,
+        'mae': mae,
+        'rmse': rmse,
+        'baseline_mae': baseline_mae,
+        'baseline_rmse': baseline_rmse,
+    }

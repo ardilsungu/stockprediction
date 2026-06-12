@@ -32,3 +32,30 @@ def chronological_split_indices(n_samples: int,
     val_end = min(val_end, n_samples - 1)
     train_end = min(train_end, val_end - 1)
     return train_end, val_end
+
+
+def naive_baseline_metrics(values, test_start: int) -> tuple:
+    """
+    Naive persistence baseline'ın test dönemi MAE/RMSE'sini döndürür.
+
+    Persistence tahmini: test dönemindeki her gün için tahmin, bir önceki
+    günün GERÇEK değeridir (yarın = bugün). `values` kronolojik sıralı tam
+    seri, `test_start` test/holdout setinin başladığı indekstir; metrik
+    [test_start, len(values)) aralığındaki günler üzerinde hesaplanır.
+
+    MAE/RMSE model fonksiyonlarıyla aynı formülle (ortalama mutlak hata,
+    kök ortalama kare hata) hesaplanır ki kıyas aynı ölçekte olsun.
+    """
+    n = len(values)
+    if n < 2:
+        raise ValueError(
+            f"Baseline için en az 2 değer gerekir, verilen: {n}")
+    if not 1 <= test_start < n:
+        raise ValueError(
+            f"test_start 1 ile {n - 1} arasında olmalı, verilen: {test_start}")
+
+    errors = [float(values[i]) - float(values[i - 1])
+              for i in range(test_start, n)]
+    mae = sum(abs(e) for e in errors) / len(errors)
+    rmse = (sum(e * e for e in errors) / len(errors)) ** 0.5
+    return mae, rmse

@@ -30,10 +30,18 @@ def run_forecast_task(self, job_id: str):
         else:
             raise ValueError(f"Bilinmeyen model_type: {job.model_type}")
 
+        # Baseline DB şemasına alan eklemeden, predictions JSONField'ı
+        # içinde {points, baseline} yapısıyla taşınır (migration yok).
         ForecastResult.objects.update_or_create(
             job=job,
             defaults={
-                'predictions': result['predictions'],
+                'predictions': {
+                    'points': result['predictions'],
+                    'baseline': {
+                        'mae': result['baseline_mae'],
+                        'rmse': result['baseline_rmse'],
+                    },
+                },
                 'mae': result['mae'],
                 'rmse': result['rmse'],
             }

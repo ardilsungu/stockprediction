@@ -18,6 +18,14 @@ FAKE_FORECAST = {
     ],
     'mae': 1.5,
     'rmse': 2.5,
+    'baseline_mae': 3.5,
+    'baseline_rmse': 4.5,
+}
+
+# tasks.py'nin ForecastResult.predictions JSONField'ına yazdığı zarf yapısı
+FAKE_SAVED_PREDICTIONS = {
+    'points': FAKE_FORECAST['predictions'],
+    'baseline': {'mae': 3.5, 'rmse': 4.5},
 }
 
 
@@ -126,10 +134,11 @@ class TestForecastSerializers:
 
     def test_detail_serializer_nested_result_fields(self, job):
         ForecastResult.objects.create(
-            job=job, predictions=FAKE_FORECAST['predictions'], mae=1.5, rmse=2.5,
+            job=job, predictions=FAKE_SAVED_PREDICTIONS, mae=1.5, rmse=2.5,
         )
         data = ForecastJobDetailSerializer(job).data
-        assert data['result']['predictions'] == FAKE_FORECAST['predictions']
+        assert data['result']['predictions']['points'] == FAKE_FORECAST['predictions']
+        assert data['result']['predictions']['baseline'] == {'mae': 3.5, 'rmse': 4.5}
         assert data['result']['mae'] == 1.5
         assert data['result']['rmse'] == 2.5
 
@@ -185,6 +194,18 @@ class TestForecastAPI:
         assert response.data['asset_symbol'] == 'BTC'
         assert response.data['result'] is None
 
+    def test_job_detail_completed_returns_points_and_baseline(self, auth_client, job):
+        job.status = 'completed'
+        job.save()
+        ForecastResult.objects.create(
+            job=job, predictions=FAKE_SAVED_PREDICTIONS, mae=1.5, rmse=2.5,
+        )
+        response = auth_client.get(reverse('forecast:job_detail', kwargs={'pk': job.id}))
+        assert response.status_code == 200
+        predictions = response.data['result']['predictions']
+        assert predictions['points'] == FAKE_FORECAST['predictions']
+        assert predictions['baseline'] == {'mae': 3.5, 'rmse': 4.5}
+
 
 @pytest.mark.django_db
 class TestRunForecastTask:
@@ -210,7 +231,7 @@ class TestRunForecastTask:
             run_forecast_task.apply(args=[str(job.id)])
 
         result = ForecastResult.objects.get(job=job)
-        assert result.predictions == FAKE_FORECAST['predictions']
+        assert result.predictions == FAKE_SAVED_PREDICTIONS
         assert result.mae == 1.5
         assert result.rmse == 2.5
 
@@ -251,7 +272,7 @@ class TestRunForecastTask:
         assert job.status == 'completed'
         assert ForecastResult.objects.filter(job=job).count() == 1
         result = ForecastResult.objects.get(job=job)
-        assert result.predictions == FAKE_FORECAST['predictions']
+        assert result.predictions == FAKE_SAVED_PREDICTIONS
         assert result.mae == 1.5
 
     def test_unknown_job_id_returns_silently(self, db):

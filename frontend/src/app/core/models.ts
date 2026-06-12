@@ -104,8 +104,18 @@ export interface ForecastPrediction {
   upper_ci: number;
 }
 
+export interface ForecastBaseline {
+  mae: number;
+  rmse: number;
+}
+
+export interface ForecastPredictionsPayload {
+  points: ForecastPrediction[];
+  baseline: ForecastBaseline;
+}
+
 export interface ForecastResult {
-  predictions: ForecastPrediction[];
+  predictions: ForecastPredictionsPayload;
   mae: number;
   rmse: number;
   created_at: string;

@@ -155,7 +155,8 @@ export class Forecast implements OnInit, OnDestroy {
 
   private renderChart(): void {
     const result = this.currentJob()?.result;
-    if (!this.chartContainer?.nativeElement || !result || result.predictions.length === 0) return;
+    const points = result?.predictions?.points ?? [];
+    if (!this.chartContainer?.nativeElement || !result || points.length === 0) return;
     this.disposeChart();
 
     this.chart = createChart(this.chartContainer.nativeElement, {
@@ -191,11 +192,11 @@ export class Forecast implements OnInit, OnDestroy {
     };
     this.ciUpperSeries = this.chart.addSeries(LineSeries, ciOptions);
     this.ciUpperSeries.setData(
-      result.predictions.map(p => ({ time: p.date, value: p.upper_ci })),
+      points.map(p => ({ time: p.date, value: p.upper_ci })),
     );
     this.ciLowerSeries = this.chart.addSeries(LineSeries, ciOptions);
     this.ciLowerSeries.setData(
-      result.predictions.map(p => ({ time: p.date, value: p.lower_ci })),
+      points.map(p => ({ time: p.date, value: p.lower_ci })),
     );
 
     // Tahmin (indigo çizgi) — geçmişin son noktasından devam etsin
@@ -205,7 +206,7 @@ export class Forecast implements OnInit, OnDestroy {
       priceLineVisible: false,
       lastValueVisible: false,
     });
-    const predData = result.predictions.map(p => ({ time: p.date, value: p.predicted }));
+    const predData = points.map(p => ({ time: p.date, value: p.predicted }));
     const lastHist = this.priceHistory[this.priceHistory.length - 1];
     if (lastHist && lastHist.date < predData[0].time) {
       predData.unshift({ time: lastHist.date, value: lastHist.close });
