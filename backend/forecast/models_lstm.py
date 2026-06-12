@@ -9,9 +9,15 @@ from assets.models import Asset, Price
 from datetime import date, timedelta
 import logging
 
+from .data_split import chronological_split_indices
+
 logger = logging.getLogger(__name__)
 
 LOOKBACK = 60
+EPOCHS = 30
+# Üçlü split sonrası en küçük parça (val/test, %15) anlamlı sayıda örnek
+# alabilsin diye sequence sayısı en az MIN_SAMPLES olmalı.
+MIN_SAMPLES = 100
 
 def build_lstm_model(lookback: int) -> tf.keras.Model:
     model = Sequential([
@@ -57,9 +63,9 @@ def run_lstm_forecast(asset: Asset, horizon_days: int = 30) -> dict:
 
     data = np.array([float(close) for _, close in prices]).reshape(-1, 1)
 
-    if len(data) < LOOKBACK + 50:
+    if len(data) < LOOKBACK + MIN_SAMPLES:
         raise ValueError(f"{asset.symbol} için yeterli veri yok. "
-                        f"Mevcut: {len(data)} gün, gereken: {LOOKBACK + 50} gün.")
+                        f"Mevcut: {len(data)} gün, gereken: {LOOKBACK + MIN_SAMPLES} gün.")
 
     # 2. Normalize et
     scaler = MinMaxScaler()
@@ -72,19 +78,22 @@ def run_lstm_forecast(asset: Asset, horizon_days: int = 30) -> dict:
         y.append(scaled[i])
     X, y = np.array(X), np.array(y)
 
-    # 4. Train/test split (%80/%20)
-    split = int(len(X) * 0.8)
-    X_train, X_test = X[:split], X[split:]
-    y_train, y_test = y[:split], y[split:]
+    # 4. Kronolojik train/val/test split (%70/%15/%15).
+    # EarlyStopping validation setine bakar; test seti model seçimine hiç
+    # karışmaz, yalnızca MAE/RMSE için kullanılır (veri sızıntısı düzeltmesi).
+    train_end, val_end = chronological_split_indices(len(X))
+    X_train, y_train = X[:train_end], y[:train_end]
+    X_val, y_val = X[train_end:val_end], y[train_end:val_end]
+    X_test, y_test = X[val_end:], y[val_end:]
 
     # 5. Modeli eğit
     model = build_lstm_model(LOOKBACK)
     early_stop = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
     model.fit(
         X_train, y_train,
-        epochs=30,
+        epochs=EPOCHS,
         batch_size=32,
-        validation_data=(X_test, y_test),
+        validation_data=(X_val, y_val),
         callbacks=[early_stop],
         verbose=0
     )
@@ -102,7 +111,7 @@ def run_lstm_forecast(asset: Asset, horizon_days: int = 30) -> dict:
         np.array(predictions_scaled).reshape(-1, 1)
     ).flatten()
 
-    # 7. Test MAE/RMSE
+    # 7. MAE/RMSE — eğitim ve early stopping'e hiç girmemiş test setinde
     y_pred_test = model.predict(X_test, verbose=0)
     y_pred_inv = scaler.inverse_transform(y_pred_test)
     y_test_inv = scaler.inverse_transform(y_test.reshape(-1, 1))
