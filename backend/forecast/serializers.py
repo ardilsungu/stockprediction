@@ -11,6 +11,9 @@ class ForecastResultSerializer(serializers.ModelSerializer):
 
 class ForecastJobCreateSerializer(serializers.ModelSerializer):
     asset_symbol = serializers.CharField(source='asset.symbol', read_only=True)
+    # Model fonksiyonlarindaki 1-365 siniriyla tutarli: gecersiz horizon
+    # failed job yerine 400 ile reddedilir.
+    horizon_days = serializers.IntegerField(min_value=1, max_value=365, default=30)
 
     class Meta:
         model = ForecastJob

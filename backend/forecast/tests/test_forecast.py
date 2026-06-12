@@ -258,3 +258,75 @@ class TestRunForecastTask:
         run_forecast_task.apply(args=[str(uuid.uuid4())])
         assert ForecastJob.objects.count() == 0
         assert ForecastResult.objects.count() == 0
+
+    def test_unexpected_error_writes_generic_message(self, job):
+        module = _mock_model_module(
+            'run_prophet_forecast',
+            side_effect=RuntimeError('connection to db at 10.0.0.5:5432 refused'),
+        )
+        with patch.dict(sys.modules, {'forecast.models_prophet': module}):
+            run_forecast_task.apply(args=[str(job.id)])
+
+        job.refresh_from_db()
+        assert job.status == 'failed'
+        assert job.error_message == 'Tahmin işlenirken beklenmeyen bir hata oluştu.'
+        assert '10.0.0.5' not in job.error_message
+
+
+def _post_job(auth_client, asset, **overrides):
+    """horizon/throttle testleri icin Celery'yi mock'layarak job POST'lar."""
+    payload = {'asset': str(asset.id), 'model_type': 'prophet', **overrides}
+    mock_async = MagicMock()
+    mock_async.id = None
+    with patch('forecast.views.run_forecast_task.delay', return_value=mock_async):
+        return auth_client.post(reverse('forecast:job_create'), payload, format='json')
+
+
+@pytest.mark.django_db
+class TestHorizonDaysValidation:
+    def test_negative_horizon_returns_400(self, auth_client, asset):
+        response = _post_job(auth_client, asset, horizon_days=-5)
+        assert response.status_code == 400
+        assert 'horizon_days' in response.data
+        assert ForecastJob.objects.count() == 0
+
+    def test_huge_horizon_returns_400(self, auth_client, asset):
+        response = _post_job(auth_client, asset, horizon_days=999999)
+        assert response.status_code == 400
+        assert 'horizon_days' in response.data
+        assert ForecastJob.objects.count() == 0
+
+    def test_omitted_horizon_defaults_to_30(self, auth_client, asset):
+        response = _post_job(auth_client, asset)
+        assert response.status_code == 201
+        assert response.data['horizon_days'] == 30
+
+    def test_boundary_values_accepted(self, auth_client, asset):
+        for horizon in (1, 365):
+            response = _post_job(auth_client, asset, horizon_days=horizon)
+            assert response.status_code == 201
+            assert response.data['horizon_days'] == horizon
+
+    def test_serializer_rejects_out_of_range(self, asset):
+        for horizon in (0, 366):
+            serializer = ForecastJobCreateSerializer(data={
+                'asset': str(asset.id),
+                'model_type': 'prophet',
+                'horizon_days': horizon,
+            })
+            assert not serializer.is_valid()
+            assert 'horizon_days' in serializer.errors
+
+
+@pytest.mark.django_db
+class TestForecastCreateThrottle:
+    def test_create_returns_429_after_limit(self, auth_client, asset):
+        # ForecastCreateThrottle: 10/min — 11. istek throttle'a takilmali.
+        statuses = [_post_job(auth_client, asset).status_code for _ in range(11)]
+        assert statuses[:10] == [201] * 10
+        assert statuses[10] == 429
+
+    def test_detail_get_is_not_throttled(self, auth_client, job):
+        url = reverse('forecast:job_detail', kwargs={'pk': job.id})
+        for _ in range(15):
+            assert auth_client.get(url).status_code == 200

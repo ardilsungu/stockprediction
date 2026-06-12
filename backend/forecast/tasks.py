@@ -41,9 +41,17 @@ def run_forecast_task(self, job_id: str):
         job.status = 'completed'
         logger.info(f"ForecastJob tamamlandi: {job_id}, model={job.model_type}")
 
-    except Exception as e:
+    except ValueError as e:
+        # Beklenen validasyon hatalari (ör. yetersiz veri) kullaniciya aynen gosterilir.
         job.status = 'failed'
         job.error_message = str(e)
+        logger.exception(f"ForecastJob basarisiz: {job_id}, hata: {e}")
+
+    except Exception as e:
+        # Beklenmeyen hatalarda ic detay (DB/altyapi) API'ye sizdirilmaz;
+        # gercek hata yalnizca loglanir.
+        job.status = 'failed'
+        job.error_message = 'Tahmin işlenirken beklenmeyen bir hata oluştu.'
         logger.exception(f"ForecastJob basarisiz: {job_id}, hata: {e}")
 
     finally:

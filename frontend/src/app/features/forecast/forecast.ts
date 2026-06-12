@@ -25,6 +25,8 @@ export class Forecast implements OnInit, OnDestroy {
   submitting = false;
   errorMessage = '';
   pollInterval: any = null;
+  private pollErrorCount = 0;
+  private static readonly MAX_POLL_ERRORS = 3;
 
   currentJob = signal<ForecastJobDetail | null>(null);
   assets = signal<Asset[]>([]);
@@ -90,6 +92,7 @@ export class Forecast implements OnInit, OnDestroy {
   }
 
   private startPolling(jobId: string): void {
+    this.pollErrorCount = 0;
     this.pollJob(jobId);
     this.pollInterval = setInterval(() => this.pollJob(jobId), 3000);
   }
@@ -97,12 +100,22 @@ export class Forecast implements OnInit, OnDestroy {
   private pollJob(jobId: string): void {
     this.forecastService.getJobDetail(jobId).subscribe({
       next: (job) => {
+        this.pollErrorCount = 0;
         this.currentJob.set(job);
         if (job.status === 'completed' || job.status === 'failed') {
           this.clearPoll();
           if (job.status === 'completed' && job.result) {
             this.loadHistoryAndRender(job.asset_symbol);
           }
+        }
+      },
+      error: () => {
+        // Token süresi dolduysa, job silindiyse veya backend düştüyse sonsuza
+        // dek başarısız istek atmamak için ardışık hatada poll durdurulur.
+        this.pollErrorCount++;
+        if (this.pollErrorCount >= Forecast.MAX_POLL_ERRORS) {
+          this.clearPoll();
+          this.errorMessage = 'Job durumu alınamadı. Lütfen sayfayı yenileyip tekrar deneyin.';
         }
       },
     });
