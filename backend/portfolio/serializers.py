@@ -49,6 +49,16 @@ class PortfolioJobSerializer(serializers.ModelSerializer):
         ):
             errors['min_assets'] = 'min_assets max_assets değerinden büyük olamaz.'
 
+        # n_obj: PARAM_RANGES'ta yer almıyordu → tasks.py'de doğrudan kullanılıp
+        # CryptoPortfolioProblem'e n_obj olarak geçiyordu. Kullanıcı n_obj:10
+        # gönderip pymoo'yu (ve worker'ı) kilitleyebiliyordu. Kod _evaluate'te
+        # yalnızca 2 (getiri+CVaR) veya 3 (+volatilite) hedef dolduruyor; bu
+        # nedenle izin verilen tek değerler {2, 3}. Diğer her şey 400.
+        if 'n_obj' in params:
+            n_obj = params['n_obj']
+            if isinstance(n_obj, bool) or not isinstance(n_obj, int) or n_obj not in (2, 3):
+                errors['n_obj'] = 'n_obj yalnızca 2 veya 3 olabilir.'
+
         if errors:
             raise serializers.ValidationError(errors)
         return params

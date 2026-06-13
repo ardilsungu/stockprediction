@@ -1,3 +1,4 @@
+import math
 from datetime import datetime, timedelta
 import requests
 import redis
@@ -5,6 +6,21 @@ from celery import shared_task
 from celery.utils.log import get_task_logger
 
 logger = get_task_logger(__name__)
+
+
+def _finite_or_none(value, ndigits: int = 6):
+    """Metrik serileştirmesi için TEK ve tutarlı finite politikası.
+
+    inf/-inf/NaN → None. Eskiden sortino/calmar için inf→0 yazılıyordu (inf
+    "mükemmel" iken 0 "berbat" demek → ters sinyal), omega için ise finite
+    kontrolü hiç yoktu → float('inf') doğrudan JSONField'a gidip Postgres jsonb
+    tarafından reddedilebiliyordu (task çökmesi). None ile hem ters sinyal hem
+    çökme yolu kapanır ve nsga3.main()'deki _safe() ile aynı davranış sağlanır.
+    """
+    v = float(value)
+    if not math.isfinite(v):
+        return None
+    return round(v, ndigits)
 
 # yFinance bazı günleri (hafta sonu, tatil, ilk işlem günü öncesi) atlar.
 # `lookback_days` kadar veri elde edebilmek için talep aralığını bir miktar
@@ -160,20 +176,22 @@ def run_portfolio_optimization(self, job_id, params):
         )
 
         # ── 7. Sonuçları serialize et ve kaydet ─────────────────────────────
-        import numpy as np
+        # Tüm metrikler _finite_or_none'dan geçer: inf/-inf/NaN → None. Böylece
+        # JSONField'a asla Infinity/NaN gitmez (jsonb güvenli) ve sonsuz değerler
+        # tutarlı tek bir politikayla işlenir (bkz. _finite_or_none docstring).
         strategies_dict = {}
         for key, s in strategies.items():
             strategies_dict[key] = {
                 "name":          s["name"],
-                "annual_return": round(float(s["annual_return"]), 6),
-                "annual_vol":    round(float(s["annual_vol"]), 6),
-                "sharpe":        round(float(s["sharpe"]), 4),
-                "sortino":       round(float(s["sortino"]) if np.isfinite(s["sortino"]) else 0, 4),
-                "calmar":        round(float(s["calmar"]) if np.isfinite(s["calmar"]) else 0, 4),
-                "omega":         round(float(s["omega"]), 4),
-                "cvar_daily":    round(float(s["cvar_daily"]), 6),
-                "cvar_annual":   round(float(s["cvar_annual"]), 6),
-                "max_drawdown":  round(float(s["max_drawdown"]), 6),
+                "annual_return": _finite_or_none(s["annual_return"], 6),
+                "annual_vol":    _finite_or_none(s["annual_vol"], 6),
+                "sharpe":        _finite_or_none(s["sharpe"], 4),
+                "sortino":       _finite_or_none(s["sortino"], 4),
+                "calmar":        _finite_or_none(s["calmar"], 4),
+                "omega":         _finite_or_none(s["omega"], 4),
+                "cvar_daily":    _finite_or_none(s["cvar_daily"], 6),
+                "cvar_annual":   _finite_or_none(s["cvar_annual"], 6),
+                "max_drawdown":  _finite_or_none(s["max_drawdown"], 6),
                 "n_active":      int(s["n_active"]),
                 "is_duplicate":  bool(s.get("is_duplicate", False)),
             }

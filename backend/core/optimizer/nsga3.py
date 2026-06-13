@@ -41,6 +41,7 @@ warnings.filterwarnings("ignore")
 # pymoo imports
 from pymoo.algorithms.moo.nsga3 import NSGA3
 from pymoo.core.problem import Problem
+from pymoo.core.repair import Repair
 from pymoo.core.duplicate import ElementwiseDuplicateElimination
 from pymoo.optimize import minimize
 from pymoo.util.ref_dirs import get_reference_directions
@@ -902,6 +903,118 @@ def compute_var(weights: np.ndarray, returns_matrix: np.ndarray,
 
 
 # ─────────────────────────────────────────────
+# 4.5. AĞIRLIK REPAIR  (kısıt projeksiyonu)
+# ─────────────────────────────────────────────
+
+def repair_weight_vector(x: np.ndarray, max_weight: float,
+                         tol: float = 1e-9) -> np.ndarray:
+    """Ham genomu geçerli bir long-only ağırlık vektörüne projekte eder.
+
+    Garantiler (verification target):
+        toplam = 1,  her wᵢ ≤ max_weight,  her wᵢ ≥ 0.
+
+    Neden basit X/sum(X) yetmez: normalizasyon toplam=1 sağlar AMA wᵢ ≤
+    max_weight'i sağlamaz; sum(X) < 1 olduğunda tek bir gen normalize sonrası
+    sınırı kat kat aşabilir (eski hatada tek-varlık ~%97). Burada capped/
+    iteratif "water-filling" projeksiyonu kullanılır: sınırı aşan ağırlıklar
+    max_weight'e kırpılır, taşan kütle sınıra ulaşmamış AKTİF genlere yeniden
+    dağıtılır; aşım kalmayana dek tekrarlanır.
+
+    Seyreklik (cardinality) korunur: yalnızca pozitif genler (aktif set) kütle
+    paylaşır; sıfır/negatif genler sıfır kalır. Taşan kütle, aktif uncapped
+    genlere ORANTILI dağıtılır (eşit değil) — böylece "dust" (çok küçük) genler
+    küçük kalır, kütle zaten anlamlı genlerde yoğunlaşır ve aktif/sıfır yapısı
+    bozulmaz. min/max_assets kısıtları repair'in işi DEĞİL — onlar problem G
+    vektöründe optimizatöre bırakılır. Repair sadece toplam=1'i mümkün kılacak
+    kadar (n_min = ⌈1/max_weight⌉) genin aktif olmasını garanti eder.
+
+    Determinizm: hiçbir rastgelelik yok; aktif set genişletilmesi gerekirse
+    genler büyük-x → küçük-index sırasıyla deterministik seçilir. Zaten geçerli
+    bir vektörde idempotenttir (aynısını döndürür).
+
+    Fizibilite ön-koşulu: max_weight * n_assets ≥ 1 olmalı; aksi halde toplam=1
+    capped sınırlarla imkânsızdır → anlamlı ValueError.
+    """
+    x = np.clip(np.asarray(x, dtype=float), 0.0, None)
+    n = x.size
+    if max_weight * n < 1.0 - tol:
+        raise ValueError(
+            f"max_weight={max_weight:.4g} ile {n} varlık için toplam=1 imkânsız "
+            f"(max_weight * n_assets = {max_weight * n:.4g} < 1). "
+            f"max_weight'i artırın veya varlık sayısını çoğaltın."
+        )
+
+    # toplam=1'e cap'lerle ulaşabilmek için gereken minimum aktif gen sayısı
+    n_min = int(np.ceil(1.0 / max_weight - tol))
+    n_min = max(1, min(n_min, n))
+
+    active = x > 0.0
+    if active.sum() < n_min:
+        # Aktif set yetersiz → toplam=1 fizibilitesi için deterministik genişlet:
+        # büyük-x öncelikli, eşitlikte küçük-index.
+        order = np.lexsort((np.arange(n), -x))
+        active = np.zeros(n, dtype=bool)
+        active[order[:n_min]] = True
+
+    w = np.zeros(n)
+    xa = x[active]
+    xa_sum = xa.sum()
+    if xa_sum <= tol:
+        w[active] = 1.0 / active.sum()
+    else:
+        w[active] = xa / xa_sum
+
+    # İteratif water-filling cap. Her tur sınırı aşan genler max_weight'e
+    # sabitlenir (bir daha azalmaz) → capped küme tekdüze büyür, en çok n turda
+    # yakınsar; range(n+1) güvenli üst sınır. Taşan kütle orantılı dağıtılır;
+    # under-toplam ihmal edilebilirse (tüm uncapped genler dust) eşit dağıtıma
+    # düşülür ki kütle bir yere gitsin.
+    for _ in range(n + 1):
+        over = w > max_weight
+        if not over.any():
+            break
+        excess = float((w[over] - max_weight).sum())
+        w[over] = max_weight
+        under = active & (w < max_weight)
+        n_under = int(under.sum())
+        if n_under == 0:
+            break
+        under_sum = float(w[under].sum())
+        if under_sum > tol:
+            w[under] += excess * (w[under] / under_sum)
+        else:
+            w[under] += excess / n_under
+
+    return w
+
+
+def repair_weights(X: np.ndarray, max_weight: float) -> np.ndarray:
+    """`repair_weight_vector`'ı tekil (1B) veya popülasyon (2B) girdiye uygular."""
+    X = np.asarray(X, dtype=float)
+    if X.ndim == 1:
+        return repair_weight_vector(X, max_weight)
+    return np.vstack([repair_weight_vector(row, max_weight) for row in X])
+
+
+class WeightRepair(Repair):
+    """pymoo Repair operatörü: her bireyin genomunu geçerli ağırlık vektörüne
+    (toplam=1, wᵢ≤max_weight, wᵢ≥0) projekte eder.
+
+    Mating sırasında offspring genomlarına uygulanır; arama feasible bölgede
+    kalır. Başlangıç popülasyonu pymoo tarafından repair edilmediğinden,
+    `_evaluate` ayrıca aynı projeksiyonu uygular (idempotent) → metrikler ve
+    kısıtlar daima sunulacak ağırlıklarla hesaplanır.
+    """
+
+    def __init__(self, max_weight: float):
+        super().__init__()
+        self.max_weight = max_weight
+
+    def _do(self, problem, X, **kwargs):
+        return repair_weights(X, self.max_weight)
+
+
+# ─────────────────────────────────────────────
 # 5. PYMOO PROBLEMİ
 # ─────────────────────────────────────────────
 
@@ -913,10 +1026,15 @@ class CryptoPortfolioProblem(Problem):
         f1 = -Beklenen Getiri        (min → aslında maksimize)
         f2 =  CVaR                   (min)
         f3 =  Volatilite  [opsiyonel](min)
-    Kısıtlar:
-        g1 = |Σwᵢ - 1| - 0.01        (ağırlıklar toplamı = 1)
-        g2 = min_assets - active     (≥ min_assets aktif varlık)
-        g3 = active - max_assets     (≤ max_assets aktif varlık)
+    Kısıtlar (2 eşitsizlik):
+        g1 = min_assets - active     (≥ min_assets aktif varlık)
+        g2 = active - max_assets     (≤ max_assets aktif varlık)
+
+    Not: Ağırlık fizibilitesi (Σwᵢ = 1, wᵢ ≤ max_weight, wᵢ ≥ 0) artık bir
+    KISIT değil; `WeightRepair` / `repair_weights` ile projeksiyon yoluyla
+    GARANTİ edilir (bkz. _evaluate). Eski |Σwᵢ-1| kısıtı, W normalize edildiği
+    için daima sağlanan vakum bir kısıttı ve kaldırıldı; geriye yalnızca
+    cardinality (aktif varlık sayısı) gerçek kısıtları kaldı.
     """
 
     def __init__(
@@ -941,8 +1059,20 @@ class CryptoPortfolioProblem(Problem):
         self.transaction_cost = transaction_cost
         self.min_assets       = min_assets
         self.max_assets       = max_assets
+        self.max_weight       = max_weight
         self.n_obj            = n_obj
         self.weight_threshold = weight_threshold
+
+        # Fizibilite ön-koşulu: cap'li ağırlıklarla toplam=1'e ulaşılabilmesi
+        # için max_weight * n_assets ≥ 1 olmalı (aksi halde repair toplam=1
+        # üretemez). Erken ve net hata ver.
+        if max_weight * self.n_assets < 1.0 - 1e-9:
+            raise ValueError(
+                f"max_weight={max_weight:.4g} ile {self.n_assets} varlık için "
+                f"toplam=1 imkânsız (max_weight * n_assets = "
+                f"{max_weight * self.n_assets:.4g} < 1). max_weight'i artırın "
+                f"veya daha fazla varlık kullanın."
+            )
 
         if current_weights is None:
             self.current_weights = np.ones(self.n_assets) / self.n_assets
@@ -952,18 +1082,22 @@ class CryptoPortfolioProblem(Problem):
         super().__init__(
             n_var=self.n_assets,
             n_obj=n_obj,
-            n_ieq_constr=3,
+            n_ieq_constr=2,
             xl=np.full(self.n_assets, min_weight),
             xu=np.full(self.n_assets, max_weight),
         )
 
     def _evaluate(self, X: np.ndarray, out: dict, *args, **kwargs):
         pop_size = X.shape[0]
-        weight_sums = X.sum(axis=1, keepdims=True)
-        W = X / (weight_sums + 1e-12)
+        # Ağırlık fizibilitesini projeksiyonla GARANTİ et (toplam=1,
+        # wᵢ≤max_weight, wᵢ≥0). Başlangıç popülasyonu pymoo tarafından repair
+        # edilmediği için burada da uygulanır; WeightRepair ile birlikte
+        # idempotenttir. Metrikler ve kısıtlar böylece daima gerçekten
+        # sunulacak ağırlıklarla hesaplanır.
+        W = repair_weights(X, self.max_weight)
 
         F = np.zeros((pop_size, self.n_obj))
-        G = np.zeros((pop_size, 3))
+        G = np.zeros((pop_size, 2))
 
         n_days = self.returns_matrix.shape[0]
         for i in range(pop_size):
@@ -980,10 +1114,11 @@ class CryptoPortfolioProblem(Problem):
             if self.n_obj == 3:
                 F[i, 2] = compute_portfolio_volatility(w, self.cov_matrix)
 
-            G[i, 0] = abs(w.sum() - 1.0) - 0.01
+            # Yalnızca cardinality gerçek kısıt; toplam=1 ve max_weight repair
+            # ile garanti olduğundan G'den çıkarıldı (vakum kısıt temizliği).
             active  = np.sum(w > self.weight_threshold)
-            G[i, 1] = self.min_assets - active
-            G[i, 2] = active - self.max_assets
+            G[i, 0] = self.min_assets - active
+            G[i, 1] = active - self.max_assets
 
         out["F"] = F
         out["G"] = G
@@ -1046,6 +1181,9 @@ def run_nsga3_optimization(
         selection=TournamentSelection(func_comp=_deterministic_comp),
         crossover=SBX(prob=0.9, eta=15),
         mutation=PM(prob=1.0 / problem.n_var, eta=20),
+        # Offspring genomlarını feasible ağırlık simpleksine projekte et
+        # (toplam=1, wᵢ≤max_weight, wᵢ≥0). Arama feasible bölgede kalır.
+        repair=WeightRepair(max_weight),
         eliminate_duplicates=NumpyDuplicateElimination(),
     )
 
@@ -1069,7 +1207,10 @@ def run_nsga3_optimization(
             "Kısıtları gevşetin: max_weight artırın, "
             "min_assets azaltın veya n_gen artırın."
         )
-    pareto_weights = X_opt / (X_opt.sum(axis=1, keepdims=True) + 1e-12)
+    # Nihai ağırlıklar da aynı repair'den geçer → çıktı kısıtları (toplam=1,
+    # wᵢ≤max_weight) optimizasyon sırasındakiyle birebir aynı garantiyle taşır.
+    # Eski ham X/sum(X) max_weight'i aşabiliyordu (kapatılan 🔴 bulgu).
+    pareto_weights = repair_weights(X_opt, max_weight)
 
     print(f"\n  Pareto-optimal çözüm sayısı: {len(pareto_weights)}")
 
