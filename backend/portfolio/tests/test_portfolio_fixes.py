@@ -83,6 +83,7 @@ def _inf_strategies():
             'max_drawdown':  0.1,
             'n_active':      2,
             'is_duplicate':  False,
+            'pareto_index':  0,
         }
     }
 
@@ -91,9 +92,10 @@ def _inf_strategies():
 class TestInfSerialization:
     def _run_with_inf(self, user):
         job = PortfolioJob.objects.create(user=user, params={})
+        # 200 gözlem: holdout split (train≥60, test≥30) eşiğini geçsin.
         mock_returns = pd.DataFrame(
-            {'BTC': [0.01, -0.02] * 30, 'ETH': [0.02, -0.01] * 30},
-            index=pd.date_range('2024-01-01', periods=60),
+            {'BTC': [0.01, -0.02] * 100, 'ETH': [0.02, -0.01] * 100},
+            index=pd.date_range('2024-01-01', periods=200),
         )
         mock_opt = {
             'pareto_weights': np.array([[0.5, 0.5]]),
@@ -132,6 +134,18 @@ class TestInfSerialization:
         # Strict JSON (allow_nan=False) Infinity/NaN olsa patlardı; geçmesi
         # jsonb'ye asla Infinity gitmediğinin kanıtı.
         json.dumps(result.strategies, allow_nan=False)
+
+    def test_holdout_evaluation_metadata_and_pareto_index(self, user):
+        # Prompt B: out-of-sample holdout metadata params'a yazılmalı ve her
+        # stratejide pareto_index taşınmalı.
+        result = self._run_with_inf(user)
+        ev = result.job.params.get('evaluation')
+        assert ev is not None
+        assert ev['method'] == 'holdout'
+        assert ev['n_train'] + ev['n_test'] == 200
+        assert ev['n_test'] >= 30
+        assert 'test_start' in ev and 'test_end' in ev
+        assert result.strategies['max_sharpe']['pareto_index'] == 0
 
 
 # ── FIX 3: n_obj validasyonu ───────────────────────────────────────────────

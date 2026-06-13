@@ -46,6 +46,19 @@
   padding: 10px 14px;
 }
 
+.oos-banner {
+  background: rgba(59,130,246,0.08);
+  border: 1px solid rgba(59,130,246,0.35);
+  border-radius: 8px;
+  color: #93c5fd;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+
+  strong { color: #bfdbfe; }
+}
+
 .btn-primary {
   background: #6366f1;
   border: none;

@@ -167,6 +167,16 @@ def is_filtered_coin(symbol: str, exclude_stables=True,
 # ─────────────────────────────────────────────
 # 2. COINGECKO'DAN TOP-N COIN ÇEK  (piyasa değeri / hacim)
 # ─────────────────────────────────────────────
+#
+# ⚠ SURVIVORSHIP BIAS — bilinçli kabul edilen yapısal kısıt:
+# Evren, BUGÜNÜN market-cap top-N'inden seçiliyor. Yani geçmişte var olup
+# bugün listede olmayan (çökmüş/delist olmuş) coinler hiç dahil edilmiyor;
+# yalnızca "hayatta kalanlar" optimize ediliyor. Bu, geçmiş getiri/risk
+# tahminlerini YUKARI yanlı (iyimser) yapabilir. Tarihsel (point-in-time)
+# market-cap sıralaması verimiz olmadığı için bu KOD ile çözülmüyor; bilinçli
+# bir sınır olarak kabul ediliyor. Raporlanan tüm metrikler bu sınır dahilinde
+# yorumlanmalıdır. (Holdout/out-of-sample metrikler in-sample iyimserliği azaltır
+# ama survivorship bias'ı gidermez.)
 
 def _get_fallback_coin_list() -> list:
     """
@@ -1125,6 +1135,58 @@ class CryptoPortfolioProblem(Problem):
 
 
 # ─────────────────────────────────────────────
+# 5.5. HOLDOUT (TRAIN/TEST) BÖLME — out-of-sample değerlendirme
+# ─────────────────────────────────────────────
+
+# Holdout (out-of-sample) değerlendirme parametreleri. Optimizasyon TRAIN'de
+# yapılır, raporlanan metrikler DOKUNULMAMIŞ TEST'te hesaplanır → in-sample
+# (çifte-seçim) iyimserliği giderilir.
+HOLDOUT_TEST_FRACTION = 0.2   # son %20 kronolojik test penceresi
+MIN_TRAIN_OBS = 60            # train hâlâ anlamlı optimize edilebilmeli
+MIN_TEST_OBS = 30             # test ölçülebilir uzunlukta olmalı (CVaR/Sharpe)
+
+
+def chronological_train_test_split(
+    returns_df: pd.DataFrame,
+    test_fraction: float = HOLDOUT_TEST_FRACTION,
+    min_train_obs: int = MIN_TRAIN_OBS,
+    min_test_obs: int = MIN_TEST_OBS,
+) -> tuple:
+    """Returns_df'i kronolojik (zaman sıralı) train/test'e böler.
+
+    Bölme örtüşmesiz ve kronolojiktir: train = ilk (1 - test_fraction) oranı
+    (geçmiş), test = son test_fraction oranı (en yeni). Index'in artan zaman
+    sırasında olduğu varsayılır — pipeline (DB/yfinance yolları) sort_index
+    uyguladığı için bu garanti.
+
+    Out-of-sample değerlendirme mantığı: ağırlıklar TRAIN üzerinde
+    optimize/seçilir; performans metrikleri DOKUNULMAMIŞ TEST üzerinde
+    hesaplanır. Böylece raporlanan Sharpe/Sortino/CVaR/getiri, ağırlıkların
+    seçildiği veriden ayrı bir pencerede ölçülür.
+
+    Eşik altı veri → anlamlı ValueError (train optimize edilebilir, test
+    ölçülebilir kalmalı).
+
+    Returns
+    -------
+    (train_df, test_df)
+    """
+    n = len(returns_df)
+    n_test = int(round(n * test_fraction))
+    n_train = n - n_test
+    if n_train < min_train_obs or n_test < min_test_obs:
+        raise ValueError(
+            f"Holdout (out-of-sample) değerlendirme için yetersiz veri: "
+            f"{n} gözlemden train={n_train}, test={n_test} çıkıyor "
+            f"(gerekli: train ≥ {min_train_obs}, test ≥ {min_test_obs}). "
+            f"lookback_days'i artırın veya daha uzun geçmişi olan coinler kullanın."
+        )
+    train_df = returns_df.iloc[:n_train]
+    test_df = returns_df.iloc[n_train:]
+    return train_df, test_df
+
+
+# ─────────────────────────────────────────────
 # 6. OPTİMİZASYON ÇALIŞTIR
 # ─────────────────────────────────────────────
 
@@ -1233,6 +1295,7 @@ def select_portfolio_strategies(
     returns_df: pd.DataFrame,
     alpha: float = 0.05,
     periods_per_year: int = 365,
+    eval_returns_df: pd.DataFrame = None,
 ) -> dict:
     """
     Pareto cephesinden 5 strateji seç:
@@ -1249,6 +1312,21 @@ def select_portfolio_strategies(
     bayrağıyla işaretlenir (UI'da uyarı için).
 
     Önceliklendirme: sharpe → min_cvar → max_return → max_sortino → balanced.
+
+    SEÇİM vs METRİK penceresi:
+      - SEÇİM (hangi Pareto noktası hangi strateji) DAİMA `returns_df`
+        (= optimizasyon/train penceresi) üzerinde yapılır; karar anında elde
+        olan veri budur.
+      - METRİK TABLOSU (annual_return/Sharpe/Sortino/CVaR/...) `eval_returns_df`
+        verildiyse ORADA (out-of-sample/holdout test penceresi) hesaplanır;
+        verilmediyse geriye-uyumlu olarak `returns_df` (in-sample) kullanılır.
+    Bu ayrım, raporlanan metriklerin ağırlıkların seçildiği veriden AYRI bir
+    pencerede ölçülmesini sağlar (in-sample iyimserliğini giderir).
+
+    Her stratejiye `pareto_index` (cephedeki konum indeksi) eklenir; UI grafik
+    işaretçilerini metrik değerine bağlı mesafe eşlemesi yerine bu indeksle
+    konumlandırır (out-of-sample metrik in-sample cephe konumundan ayrıştığında
+    işaretçilerin kaymaması için).
     """
     mean_ret = returns_df.mean().values
     cov_mat  = returns_df.cov().values
@@ -1304,6 +1382,7 @@ def select_portfolio_strategies(
             "color":        "#1D9E75",
             "marker":       "★",
             "is_duplicate": sharpe_dup,
+            "pareto_index": int(sharpe_idx),
         },
         "max_sortino": {
             "weights":      pareto_weights[sortino_idx],
@@ -1311,6 +1390,7 @@ def select_portfolio_strategies(
             "color":        "#E8A33D",
             "marker":       "✦",
             "is_duplicate": sortino_dup,
+            "pareto_index": int(sortino_idx),
         },
         "min_cvar": {
             "weights":      pareto_weights[min_cvar_idx],
@@ -1318,6 +1398,7 @@ def select_portfolio_strategies(
             "color":        "#378ADD",
             "marker":       "◆",
             "is_duplicate": min_cvar_dup,
+            "pareto_index": int(min_cvar_idx),
         },
         "max_return": {
             "weights":      pareto_weights[max_return_idx],
@@ -1325,6 +1406,7 @@ def select_portfolio_strategies(
             "color":        "#D85A30",
             "marker":       "▲",
             "is_duplicate": max_return_dup,
+            "pareto_index": int(max_return_idx),
         },
         "balanced": {
             "weights":      pareto_weights[balanced_idx],
@@ -1332,25 +1414,34 @@ def select_portfolio_strategies(
             "color":        "#7F77DD",
             "marker":       "●",
             "is_duplicate": balanced_dup,
+            "pareto_index": int(balanced_idx),
         },
     }
+
+    # Metrik penceresi: eval_returns_df verildiyse metrikler ORADA (out-of-sample
+    # holdout) hesaplanır; aksi halde returns_df (in-sample, geriye-uyumlu).
+    # n_active ağırlıkların yapısal özelliği olduğu için pencereden bağımsızdır.
+    metric_df = eval_returns_df if eval_returns_df is not None else returns_df
+    m_mean = metric_df.mean().values
+    m_cov  = metric_df.cov().values
+    m_ret  = metric_df.values
 
     # Her strateji için metrik tablosu
     ann = periods_per_year
     for key, strat in strategies.items():
         w = strat["weights"]
-        strat["annual_return"] = compute_portfolio_return(w, mean_ret) * ann
-        strat["annual_vol"]    = compute_portfolio_volatility(w, cov_mat) * np.sqrt(ann)
-        strat["sharpe"]        = compute_sharpe(w, mean_ret, cov_mat,
+        strat["annual_return"] = compute_portfolio_return(w, m_mean) * ann
+        strat["annual_vol"]    = compute_portfolio_volatility(w, m_cov) * np.sqrt(ann)
+        strat["sharpe"]        = compute_sharpe(w, m_mean, m_cov,
                                                 periods_per_year=ann)
-        strat["sortino"]       = compute_sortino(w, ret_mat, periods_per_year=ann)
-        strat["calmar"]        = compute_calmar(w, mean_ret, ret_mat,
+        strat["sortino"]       = compute_sortino(w, m_ret, periods_per_year=ann)
+        strat["calmar"]        = compute_calmar(w, m_mean, m_ret,
                                                 periods_per_year=ann)
-        strat["omega"]         = compute_omega(w, ret_mat, threshold=0.0)
-        strat["var_daily"]     = compute_var(w, ret_mat, alpha)
-        strat["cvar_daily"]    = compute_cvar(w, ret_mat, alpha)
+        strat["omega"]         = compute_omega(w, m_ret, threshold=0.0)
+        strat["var_daily"]     = compute_var(w, m_ret, alpha)
+        strat["cvar_daily"]    = compute_cvar(w, m_ret, alpha)
         strat["cvar_annual"]   = strat["cvar_daily"] * np.sqrt(ann)
-        strat["max_drawdown"]  = compute_max_drawdown(w, ret_mat)
+        strat["max_drawdown"]  = compute_max_drawdown(w, m_ret)
         strat["n_active"]      = int(np.sum(w > 0.005))
 
     return strategies

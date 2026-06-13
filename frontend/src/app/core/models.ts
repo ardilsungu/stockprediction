@@ -42,6 +42,16 @@ export interface PricePoint {
 
 export type PortfolioJobStatus = 'pending' | 'running' | 'completed' | 'failed';
 
+export interface PortfolioEvaluation {
+  // Metriklerin hesaplandığı out-of-sample (holdout) pencere bilgisi.
+  method: string;            // 'holdout'
+  test_fraction: number;     // ör. 0.2
+  n_train: number;
+  n_test: number;
+  test_start: string;        // YYYY-MM-DD
+  test_end: string;
+}
+
 export interface PortfolioJobParams {
   lookback_days?: number;
   n_coins?: number;
@@ -51,6 +61,8 @@ export interface PortfolioJobParams {
   min_assets?: number;
   max_assets?: number;
   n_obj?: number;
+  // Backend, optimizasyon sırasında holdout değerlendirme metadata'sını buraya yazar.
+  evaluation?: PortfolioEvaluation;
   [key: string]: unknown;
 }
 
@@ -65,6 +77,7 @@ export interface PortfolioJob {
 
 export interface StrategyMetrics {
   name: string;
+  // Performans metrikleri out-of-sample (holdout test penceresi) hesaplanır.
   annual_return: number;
   annual_vol: number;
   sharpe: number;
@@ -76,6 +89,8 @@ export interface StrategyMetrics {
   max_drawdown: number;
   n_active: number;
   is_duplicate?: boolean;
+  // Bu stratejinin Pareto cephesindeki konum indeksi (grafik işaretçisi için).
+  pareto_index?: number;
 }
 
 export interface ParetoSolution {

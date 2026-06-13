@@ -155,9 +155,10 @@ class TestTaskUsesDbPath:
         """tasks.py load_prices_from_db_or_fetch çağırmalı, yfinance'i doğrudan çağırmamalı."""
         job = PortfolioJob.objects.create(user=user, params={})
 
+        # 200 gözlem: holdout split (train≥60, test≥30) eşiğini geçsin.
         mock_returns = pd.DataFrame(
-            {'BTC': [0.01, -0.02] * 30, 'ETH': [0.02, -0.01] * 30},
-            index=pd.date_range('2024-01-01', periods=60),
+            {'BTC': [0.01, -0.02] * 100, 'ETH': [0.02, -0.01] * 100},
+            index=pd.date_range('2024-01-01', periods=200),
         )
         mock_opt = {
             'pareto_weights': np.array([[0.5, 0.5]]),

@@ -6,7 +6,9 @@ import { CommonModule } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
 import { ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { PortfolioService } from '../../core/services/portfolio';
-import { ParetoSolution, PortfolioJobDetail, StrategyMetrics } from '../../core/models';
+import {
+  ParetoSolution, PortfolioEvaluation, PortfolioJobDetail, StrategyMetrics,
+} from '../../core/models';
 import {
   createChart, ColorType, LineSeries,
   createSeriesMarkers, ISeriesApi, IChartApi, ISeriesMarkersPluginApi,
@@ -48,6 +50,7 @@ interface PlotPoint {
   index: number;
   annualCvar: number;
   annualReturn: number;
+  origIndex: number;   // sıralamadan önceki pareto indeksi (backend pareto_index)
   strategyKey?: string;
 }
 
@@ -101,6 +104,11 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
     if (!key) return null;
     return this.currentJob()?.result?.strategies?.[key]?.name ?? key;
   });
+
+  // Metriklerin hesaplandığı out-of-sample (holdout) pencere bilgisi (varsa).
+  evaluation = computed<PortfolioEvaluation | null>(
+    () => this.currentJob()?.params?.evaluation ?? null,
+  );
 
   pollInterval: any = null;
   errorMessage = '';
@@ -282,14 +290,26 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
     strategies: Record<string, StrategyMetrics>,
   ): PlotPoint[] {
     const SQRT_365 = Math.sqrt(365);
-    const sorted = [...pareto].sort((a, b) => a.cvar - b.cvar);
+    // Orijinal pareto indeksini sıralama boyunca koru — backend'in pareto_index'i
+    // buna işaret eder.
+    const sorted = pareto
+      .map((p, origIndex) => ({ ...p, origIndex }))
+      .sort((a, b) => a.cvar - b.cvar);
     const points: PlotPoint[] = sorted.map((p, i) => ({
       index: i + 1,
       annualCvar: p.cvar * SQRT_365,
       annualReturn: p.expected_return * 365,
+      origIndex: p.origIndex,
     }));
 
+    // İşaretçileri pareto_index ile yerleştir: metrikler artık out-of-sample
+    // olduğu için in-sample cephe koordinatlarıyla mesafe eşlemesi kayardı.
+    // Eski sonuçlarda (pareto_index yok) güvenli geri-dönüş: metrik mesafesi.
     for (const [key, s] of Object.entries(strategies)) {
+      if (s.pareto_index != null) {
+        const pt = points.find(p => p.origIndex === s.pareto_index && !p.strategyKey);
+        if (pt) { pt.strategyKey = key; continue; }
+      }
       let bestIdx = -1;
       let bestDist = Infinity;
       for (let i = 0; i < points.length; i++) {
@@ -337,14 +357,16 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
       return;
     }
 
-    const strats = this.currentJob()?.result?.strategies ?? {};
+    // Strateji-dışı bir noktaya tıklanınca grafik-uzayında en yakın strateji
+    // işaretçisine snap et (metrik değil konum mesafesi — OOS metriklerden bağımsız).
     let bestKey: string | null = null;
     let bestDist = Infinity;
-    for (const [k, s] of Object.entries(strats)) {
-      const dr = pt.annualReturn - s.annual_return;
-      const dc = pt.annualCvar  - s.cvar_annual;
+    for (const p of this.plotPoints) {
+      if (!p.strategyKey) continue;
+      const dr = pt.annualReturn - p.annualReturn;
+      const dc = pt.annualCvar  - p.annualCvar;
       const d  = dr * dr + dc * dc;
-      if (d < bestDist) { bestDist = d; bestKey = k; }
+      if (d < bestDist) { bestDist = d; bestKey = p.strategyKey; }
     }
     if (bestKey) this.selectedStrategy.set(bestKey);
   }

@@ -56,6 +56,14 @@
   @if (strategies().length > 0) {
     <div class="card mb-24">
       <h2 class="card-title">Strateji Sonuçları</h2>
+      @if (evaluation(); as ev) {
+        <div class="oos-banner" title="Metrikler, ağırlıkların seçildiği eğitim penceresinden ayrı, dokunulmamış bir test penceresinde hesaplandı.">
+          📊 Performans metrikleri <strong>out-of-sample (holdout)</strong> hesaplandı —
+          son %{{ (ev.test_fraction * 100) | number:'1.0-0' }} test penceresi
+          ({{ ev.n_test }} gün: {{ ev.test_start }} → {{ ev.test_end }});
+          ağırlıklar {{ ev.n_train }} günlük eğitim penceresinde seçildi.
+        </div>
+      }
       <p class="muted mb-12">Detaylı portföy ağırlıklarını görmek için bir stratejiye tıklayın.</p>
       <div class="table-wrapper">
         <table class="result-table">

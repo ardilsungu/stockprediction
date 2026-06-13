@@ -74,8 +74,10 @@ def run_portfolio_optimization(self, job_id, params):
         load_prices_from_db_or_fetch,
         apply_sanity_filter,
         winsorize_returns,
+        chronological_train_test_split,
         run_nsga3_optimization,
         select_portfolio_strategies,
+        HOLDOUT_TEST_FRACTION,
     )
 
     try:
@@ -119,13 +121,19 @@ def run_portfolio_optimization(self, job_id, params):
         job.save()
 
         # ── 1. CoinGecko: coin listesi ──────────────────────────────────────
-        logger.info("Step 1/5: Fetching top coins from CoinGecko (source=%s)...", data_source)
+        # ⚠ SURVIVORSHIP BIAS (bilinçli kabul): Evren BUGÜNÜN market-cap
+        # top-N'inden seçiliyor; geçmişte var olup bugün listede olmayan coinler
+        # hiç dahil edilmiyor. Bu, geçmiş getiri tahminlerini yukarı yanlı
+        # yapabilir. Tarihsel (point-in-time) market-cap verimiz olmadığı için
+        # kod ile çözülmüyor; metrikler bu sınır dahilinde yorumlanmalı. (Detay:
+        # nsga3.py bölüm 2 başlığındaki not.)
+        logger.info("Step 1/6: Fetching top coins from CoinGecko (source=%s)...", data_source)
         coins_df = fetch_top_coins(n_target=n_coins, sort_by='market_cap')
         symbols  = coins_df['symbol'].str.upper().tolist()
         logger.info(f"  {len(symbols)} coin çekildi")
 
         # ── 2. Fiyat verisi — DB önce, yfinance fallback ────────────────────
-        logger.info("Step 2/5: Loading price data (DB-first, yfinance fallback)...")
+        logger.info("Step 2/6: Loading price data (DB-first, yfinance fallback)...")
         returns_df = load_prices_from_db_or_fetch(
             symbols=symbols,
             lookback_days=lookback,
@@ -133,13 +141,13 @@ def run_portfolio_optimization(self, job_id, params):
         logger.info(f"  {len(returns_df.columns)} coin için veri yüklendi, {len(returns_df)} gün")
 
         # ── 3. Sanity filter ────────────────────────────────────────────────
-        logger.info("Step 3/5: Applying sanity filter...")
+        logger.info("Step 3/6: Applying sanity filter...")
         returns_df = apply_sanity_filter(returns_df, verbose=False)
         surviving  = returns_df.columns.tolist()
         logger.info(f"  {len(surviving)} coin sanity filter'dan geçti")
 
         # ── 4. Winsorization ────────────────────────────────────────────────
-        logger.info("Step 4/5: Winsorizing returns...")
+        logger.info("Step 4/6: Winsorizing returns...")
         returns_df = winsorize_returns(returns_df, verbose=False)
 
         # Optimizer'a giren gerçek coin listesi (sanity filter sonrası).
@@ -151,10 +159,34 @@ def run_portfolio_optimization(self, job_id, params):
         }
         job.save()
 
-        # ── 5. NSGA-III optimizasyon ────────────────────────────────────────
-        logger.info("Step 5/5: Running NSGA-III optimization...")
+        # ── 5. Holdout (out-of-sample) bölme ────────────────────────────────
+        # DÜRÜST METRİK: optimizasyonu TRAIN'de yap, raporlanan metrikleri
+        # DOKUNULMAMIŞ TEST'te hesapla → in-sample (çifte-seçim) iyimserliği
+        # giderilir. Sunulan nihai ağırlıklar TRAIN'de seçilen portföyden gelir;
+        # raporlanan metrikler bu AYNI ağırlıkların test penceresindeki
+        # out-of-sample performansıdır (forecast holdout yaklaşımıyla tutarlı,
+        # tek optimizasyon koşusu — bkz. commit notu).
+        logger.info("Step 5/6: Chronological holdout split (train/test)...")
+        train_df, test_df = chronological_train_test_split(returns_df)
+        logger.info(f"  holdout → train={len(train_df)} gün, test={len(test_df)} gün")
+
+        job.params = {
+            **job.params,
+            'evaluation': {
+                'method':        'holdout',
+                'test_fraction': HOLDOUT_TEST_FRACTION,
+                'n_train':       len(train_df),
+                'n_test':        len(test_df),
+                'test_start':    str(test_df.index[0])[:10],
+                'test_end':      str(test_df.index[-1])[:10],
+            },
+        }
+        job.save()
+
+        # ── 6. NSGA-III optimizasyon (TRAIN penceresinde) + strateji seçimi ──
+        logger.info("Step 6/6: Running NSGA-III optimization on train window...")
         opt_result = run_nsga3_optimization(
-            returns_df=returns_df,
+            returns_df=train_df,
             n_obj=n_obj,
             pop_size=pop_size,
             n_gen=n_gen,
@@ -168,17 +200,20 @@ def run_portfolio_optimization(self, job_id, params):
         pareto_F       = opt_result['pareto_F']
         tickers        = opt_result['tickers']
 
-        # ── 6. Strateji seçimi ──────────────────────────────────────────────
+        # Strateji seçimi TRAIN'de yapılır; metrikler eval_returns_df=test_df
+        # üzerinde (out-of-sample) hesaplanır.
         strategies = select_portfolio_strategies(
             pareto_weights=pareto_weights,
             pareto_F=pareto_F,
-            returns_df=returns_df,
+            returns_df=train_df,
+            eval_returns_df=test_df,
         )
 
         # ── 7. Sonuçları serialize et ve kaydet ─────────────────────────────
-        # Tüm metrikler _finite_or_none'dan geçer: inf/-inf/NaN → None. Böylece
-        # JSONField'a asla Infinity/NaN gitmez (jsonb güvenli) ve sonsuz değerler
-        # tutarlı tek bir politikayla işlenir (bkz. _finite_or_none docstring).
+        # Metrikler out-of-sample (test penceresi) — bkz. adım 5/6. Tüm metrikler
+        # _finite_or_none'dan geçer: inf/-inf/NaN → None (JSONField'a asla
+        # Infinity/NaN gitmez, jsonb güvenli). pareto_index UI'da grafik
+        # işaretçisini cephedeki doğru noktaya konumlandırmak için taşınır.
         strategies_dict = {}
         for key, s in strategies.items():
             strategies_dict[key] = {
@@ -194,6 +229,7 @@ def run_portfolio_optimization(self, job_id, params):
                 "max_drawdown":  _finite_or_none(s["max_drawdown"], 6),
                 "n_active":      int(s["n_active"]),
                 "is_duplicate":  bool(s.get("is_duplicate", False)),
+                "pareto_index":  int(s["pareto_index"]),
             }
 
         weights_dict = {}
