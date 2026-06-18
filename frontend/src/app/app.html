@@ -5,13 +5,13 @@
       <a routerLink="/dashboard" routerLinkActive="active">Dashboard</a>
       <a routerLink="/watchlist" routerLinkActive="active">Watchlist</a>
       <a routerLink="/portfolio" routerLinkActive="active">Portfolio</a>
-      <a routerLink="/forecast" routerLinkActive="active">Tahmin</a>
+      <a routerLink="/forecast" routerLinkActive="active">Forecast</a>
     </div>
     <div class="navbar-user">
       @if (profile) {
         <span class="user-email">{{ profile.email }}</span>
       }
-      <button class="btn-logout" (click)="logout()">Çıkış</button>
+      <button class="btn-logout" (click)="logout()">Logout</button>
     </div>
   </nav>
 }

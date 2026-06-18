@@ -1,30 +1,30 @@
 <div class="page">
   <div class="page-header">
-    <h1 class="page-title">Portfolio Optimizasyonu</h1>
-    <p class="page-subtitle">NSGA-III + CVaR çok amaçlı optimizasyon</p>
+    <h1 class="page-title">Portfolio Optimization</h1>
+    <p class="page-subtitle">NSGA-III + CVaR multi-objective optimization</p>
   </div>
 
   <div class="card mb-24">
-    <h2 class="card-title">Parametreler</h2>
+    <h2 class="card-title">Parameters</h2>
     <form [formGroup]="form" (ngSubmit)="startJob()" class="param-form">
       <div class="param-grid">
         <div class="form-group">
-          <label>Coin Sayısı (n_coins)</label>
+          <label>Coin Count (n_coins)</label>
           <input type="number" formControlName="n_coins" min="20" max="100" />
           <span class="hint">20 – 100</span>
         </div>
         <div class="form-group">
-          <label>Lookback (gün)</label>
+          <label>Lookback (days)</label>
           <input type="number" formControlName="lookback_days" min="250" max="750" />
           <span class="hint">250 – 750</span>
         </div>
         <div class="form-group">
-          <label>Nesil Sayısı (n_gen)</label>
+          <label>Generation Count (n_gen)</label>
           <input type="number" formControlName="n_gen" min="20" max="500" />
           <span class="hint">20 – 500</span>
         </div>
         <div class="form-group">
-          <label>Popülasyon (pop_size)</label>
+          <label>Population (pop_size)</label>
           <input type="number" formControlName="pop_size" min="20" max="500" />
           <span class="hint">20 – 500</span>
         </div>
@@ -33,7 +33,7 @@
         <div class="error-banner">{{ errorMessage }}</div>
       }
       <button type="submit" class="btn-primary" [disabled]="submitting">
-        {{ submitting ? 'Başlatılıyor...' : 'Optimizasyonu Başlat' }}
+        {{ submitting ? 'Starting...' : 'Run Optimization' }}
       </button>
     </form>
   </div>
@@ -41,7 +41,7 @@
   @if (currentJob(); as job) {
     <div class="card mb-24">
       <div class="job-status-row">
-        <h2 class="card-title" style="margin:0">Job Durumu</h2>
+        <h2 class="card-title" style="margin:0">Job Status</h2>
         <span class="badge {{ statusClass(job.status) }}">
           {{ statusLabel(job.status) }}
         </span>
@@ -55,28 +55,28 @@
 
   @if (strategies().length > 0) {
     <div class="card mb-24">
-      <h2 class="card-title">Strateji Sonuçları</h2>
+      <h2 class="card-title">Strategy Results</h2>
       @if (evaluation(); as ev) {
-        <div class="oos-banner" title="Metrikler, ağırlıkların seçildiği eğitim penceresinden ayrı, dokunulmamış bir test penceresinde hesaplandı.">
-          📊 Performans metrikleri <strong>out-of-sample (holdout)</strong> hesaplandı —
-          son %{{ (ev.test_fraction * 100) | number:'1.0-0' }} test penceresi
-          ({{ ev.n_test }} gün: {{ ev.test_start }} → {{ ev.test_end }});
-          ağırlıklar {{ ev.n_train }} günlük eğitim penceresinde seçildi.
+        <div class="oos-banner" title="Metrics were computed on an untouched test window, separate from the training window where the weights were selected.">
+          📊 Performance metrics computed <strong>out-of-sample (holdout)</strong> —
+          last {{ (ev.test_fraction * 100) | number:'1.0-0' }}% test window
+          ({{ ev.n_test }} days: {{ ev.test_start }} → {{ ev.test_end }});
+          weights were selected over a {{ ev.n_train }}-day training window.
         </div>
       }
-      <p class="muted mb-12">Detaylı portföy ağırlıklarını görmek için bir stratejiye tıklayın.</p>
+      <p class="muted mb-12">Click a strategy to see detailed portfolio weights.</p>
       <div class="table-wrapper">
         <table class="result-table">
           <thead>
             <tr>
-              <th>Strateji</th>
-              <th>Yıllık Getiri</th>
-              <th>Volatilite</th>
+              <th>Strategy</th>
+              <th>Annual Return</th>
+              <th>Volatility</th>
               <th>Sharpe</th>
               <th>Sortino</th>
-              <th>CVaR (yıllık)</th>
+              <th>CVaR (annual)</th>
               <th>Max Drawdown</th>
-              <th>Aktif Varlık</th>
+              <th>Active Assets</th>
             </tr>
           </thead>
           <tbody>
@@ -87,8 +87,8 @@
                 <td class="strategy-name">
                   {{ s.name }}
                   @if (s.is_duplicate) {
-                    <span class="badge-duplicate" title="Pareto cephesi yetersiz — bu strateji başka bir strateji ile aynı portföye işaret ediyor">
-                      (Pareto cephesi yetersiz)
+                    <span class="badge-duplicate" title="Insufficient Pareto front — this strategy points to the same portfolio as another strategy">
+                      (Insufficient Pareto front)
                     </span>
                   }
                 </td>
@@ -110,10 +110,10 @@
     </div>
 
     <div class="card mb-24">
-      <h2 class="card-title">Pareto Frontier — Risk vs Getiri</h2>
+      <h2 class="card-title">Pareto Frontier — Risk vs Return</h2>
       <p class="chart-description">
-        Sol alt = düşük risk, düşük getiri &nbsp;|&nbsp;
-        Sağ üst = yüksek risk, yüksek getiri
+        Bottom left = low risk, low return &nbsp;|&nbsp;
+        Top right = high risk, high return
       </p>
       <div class="legend">
         @for (item of strategyLegend; track item.key) {
@@ -127,9 +127,9 @@
         }
       </div>
       <div class="chart-wrapper">
-        <div class="y-axis-label">Yıllık Getiri %</div>
+        <div class="y-axis-label">Annual Return %</div>
         <div #chartContainer class="chart-container"></div>
-        <div class="x-axis-label">Yıllık CVaR (Risk %)</div>
+        <div class="x-axis-label">Annual CVaR (Risk %)</div>
         @if (tooltip(); as t) {
           <div class="chart-tooltip"
                [style.left.px]="t.x + 14"
@@ -140,8 +140,8 @@
                 {{ t.strategyName }}
               </div>
             }
-            <div class="tt-row"><span>Yıllık Getiri:</span> <strong>{{ formatPct(t.annualReturn) }}</strong></div>
-            <div class="tt-row"><span>Yıllık CVaR:</span> <strong>{{ formatPct(t.annualCvar) }}</strong></div>
+            <div class="tt-row"><span>Annual Return:</span> <strong>{{ formatPct(t.annualReturn) }}</strong></div>
+            <div class="tt-row"><span>Annual CVaR:</span> <strong>{{ formatPct(t.annualCvar) }}</strong></div>
             @if (t.sharpe != null) {
               <div class="tt-row"><span>Sharpe:</span> <strong>{{ t.sharpe.toFixed(2) }}</strong></div>
             }
@@ -153,7 +153,7 @@
     @if (selectedStrategy() && selectedWeights().length > 0) {
       <div class="card">
         <h2 class="card-title">
-          Portföy Ağırlıkları —
+          Portfolio Weights —
           <span class="strategy-name">{{ selectedStrategyName() }}</span>
         </h2>
         <div class="weights-grid">

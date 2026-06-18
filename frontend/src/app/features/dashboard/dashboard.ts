@@ -53,6 +53,6 @@ export class Dashboard implements OnInit {
   }
 
   statusLabel(status: string): string {
-    return { pending: 'Bekliyor', running: 'Çalışıyor', completed: 'Tamamlandı', failed: 'Hata' }[status] ?? status;
+    return { pending: 'Pending', running: 'Running', completed: 'Completed', failed: 'Failed' }[status] ?? status;
   }
 }

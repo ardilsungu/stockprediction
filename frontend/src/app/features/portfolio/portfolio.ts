@@ -174,7 +174,7 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
         this.startPolling(job.id);
       },
       error: () => {
-        this.errorMessage = 'Job başlatılamadı.';
+        this.errorMessage = 'Failed to start job.';
         this.submitting = false;
       },
     });
@@ -193,7 +193,7 @@ export class Portfolio implements OnInit, OnDestroy, AfterViewInit {
   }
 
   statusLabel(status: string): string {
-    return { pending: 'Bekliyor', running: 'Çalışıyor...', completed: 'Tamamlandı', failed: 'Hata' }[status] ?? status;
+    return { pending: 'Pending', running: 'Running...', completed: 'Completed', failed: 'Failed' }[status] ?? status;
   }
 
   private startPolling(jobId: string): void {

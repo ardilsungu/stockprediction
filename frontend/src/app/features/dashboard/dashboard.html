@@ -3,22 +3,22 @@
     <div>
       <h1 class="page-title">Dashboard</h1>
       @if (profile) {
-        <p class="page-subtitle">Hoş geldin, <strong>{{ profile.username }}</strong></p>
+        <p class="page-subtitle">Welcome, <strong>{{ profile.username }}</strong></p>
       }
     </div>
     <div class="header-actions">
-      <a routerLink="/watchlist" class="btn btn-outline">Watchlist'im</a>
-      <a routerLink="/portfolio" class="btn btn-primary">+ Yeni Optimizasyon</a>
+      <a routerLink="/watchlist" class="btn btn-outline">My Watchlist</a>
+      <a routerLink="/portfolio" class="btn btn-primary">+ New Optimization</a>
     </div>
   </div>
 
   <div class="card">
-    <h2 class="card-title">Tüm Optimizasyonlar</h2>
+    <h2 class="card-title">All Optimizations</h2>
 
     @if (loading) {
-      <p class="muted">Yükleniyor...</p>
+      <p class="muted">Loading...</p>
     } @else if (recentJobs.length === 0) {
-      <p class="muted">Henüz bir optimizasyon çalıştırmadın.</p>
+      <p class="muted">You haven't run any optimizations yet.</p>
     } @else {
       <div class="job-list">
         @for (job of recentJobs; track job.id) {

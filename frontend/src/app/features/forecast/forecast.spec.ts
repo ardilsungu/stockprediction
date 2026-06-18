@@ -47,7 +47,7 @@ describe('Forecast — pollJob hata yönetimi', () => {
     (component as never as { startPolling(id: string): void }).startPolling('job-1');
     vi.advanceTimersByTime(6000); // ilk çağrı + 2 interval = 3 ardışık hata
 
-    expect(component.errorMessage).toContain('Job durumu alınamadı');
+    expect(component.errorMessage).toContain('Failed to get job status');
     expect(component.pollInterval).toBeNull();
 
     // Poll durduğu için yeni istek atılmamalı

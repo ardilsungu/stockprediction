@@ -52,7 +52,7 @@ export class Register {
           this.errorMessages = Object.entries(errors)
             .flatMap(([, msgs]) => (Array.isArray(msgs) ? msgs : [msgs])) as string[];
         } else {
-          this.errorMessages = ['Kayıt başarısız. Lütfen tekrar deneyin.'];
+          this.errorMessages = ['Registration failed. Please try again.'];
         }
         this.loading = false;
       },

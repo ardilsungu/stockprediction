@@ -59,7 +59,7 @@ export class Forecast implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.assetService.getAssets().subscribe({
       next: (assets) => this.assets.set(assets),
-      error: () => { this.errorMessage = 'Varlık listesi yüklenemedi.'; },
+      error: () => { this.errorMessage = 'Failed to load asset list.'; },
     });
   }
 
@@ -85,7 +85,7 @@ export class Forecast implements OnInit, OnDestroy {
         this.startPolling(job.id);
       },
       error: () => {
-        this.errorMessage = 'Tahmin işi başlatılamadı.';
+        this.errorMessage = 'Failed to start forecast job.';
         this.submitting = false;
       },
     });
@@ -115,7 +115,7 @@ export class Forecast implements OnInit, OnDestroy {
         this.pollErrorCount++;
         if (this.pollErrorCount >= Forecast.MAX_POLL_ERRORS) {
           this.clearPoll();
-          this.errorMessage = 'Job durumu alınamadı. Lütfen sayfayı yenileyip tekrar deneyin.';
+          this.errorMessage = 'Failed to get job status. Please refresh the page and try again.';
         }
       },
     });
@@ -221,6 +221,6 @@ export class Forecast implements OnInit, OnDestroy {
   }
 
   statusLabel(status: string): string {
-    return { pending: 'Bekliyor', running: 'Çalışıyor...', completed: 'Tamamlandı', failed: 'Hata' }[status] ?? status;
+    return { pending: 'Pending', running: 'Running...', completed: 'Completed', failed: 'Failed' }[status] ?? status;
   }
 }
