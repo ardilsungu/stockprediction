@@ -24,6 +24,12 @@ Kurulum:
 # ─────────────────────────────────────────────
 # 0. IMPORT
 # ─────────────────────────────────────────────
+import os
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['BLAS_NUM_THREADS'] = '1'
+import random
 import time
 import warnings
 import numpy as np
@@ -36,12 +42,61 @@ import urllib3; urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarni
 # pymoo imports
 from pymoo.algorithms.moo.nsga3 import NSGA3
 from pymoo.core.problem import Problem
+from pymoo.core.repair import Repair
+from pymoo.core.duplicate import ElementwiseDuplicateElimination
 from pymoo.optimize import minimize
 from pymoo.util.ref_dirs import get_reference_directions
 from pymoo.operators.sampling.rnd import FloatRandomSampling
 from pymoo.operators.crossover.sbx import SBX
 from pymoo.operators.mutation.pm import PM
+from pymoo.operators.selection.tournament import TournamentSelection
 from pymoo.termination import get_termination
+from pymoo.util import default_random_state
+
+try:
+    from threadpoolctl import threadpool_limits as _threadpool_limits
+except ImportError:
+    _threadpool_limits = None
+
+
+class NumpyDuplicateElimination(ElementwiseDuplicateElimination):
+    """Tolerans tabanlı duplicate eliminasyonu (np.allclose).
+
+    pymoo'nun default davranışı `eliminate_duplicates=True` Python built-in
+    hash() kullanır; Python 3.3+ default `PYTHONHASHSEED` rastgele olduğu için
+    aynı seed=42 ile bile her process'te farklı kromozomlar elenir →
+    reproducibility kırılır. NumPy `allclose` ile karşılaştırma yaparak hash
+    randomization'a olan bağımlılığı tamamen ortadan kaldırıyoruz.
+    """
+    def is_equal(self, a, b):
+        return np.allclose(a.X, b.X, atol=1e-8)
+
+
+@default_random_state
+def _deterministic_comp(pop, P, random_state=None, **kwargs):
+    """Deterministik tournament seçimi.
+
+    pymoo'nun built-in comp_by_cv_then_random fonksiyonu eşit CV değerli
+    infeasible çiftlerde compare() çağrısına random_state GEÇMİYOR — bu
+    sebeple her process'te yeni np.random.default_rng(None) yaratılıp
+    farklı sonuç üretiyor. Bu wrapper aynı mantığı uygular ama tüm
+    rastgele seçimlerde passed random_state kullanır.
+    """
+    S = np.full(P.shape[0], np.nan)
+    for i in range(P.shape[0]):
+        a, b = P[i, 0], P[i, 1]
+        cv_a = float(pop[a].CV[0])
+        cv_b = float(pop[b].CV[0])
+        if cv_a > 0.0 or cv_b > 0.0:
+            if cv_a < cv_b:
+                S[i] = a
+            elif cv_a > cv_b:
+                S[i] = b
+            else:
+                S[i] = random_state.choice([a, b])
+        else:
+            S[i] = random_state.choice([a, b])
+    return S[:, None].astype(int)
 
 
 # ─────────────────────────────────────────────
@@ -113,6 +168,16 @@ def is_filtered_coin(symbol: str, exclude_stables=True,
 # ─────────────────────────────────────────────
 # 2. COINGECKO'DAN TOP-N COIN ÇEK  (piyasa değeri / hacim)
 # ─────────────────────────────────────────────
+#
+# ⚠ SURVIVORSHIP BIAS — bilinçli kabul edilen yapısal kısıt:
+# Evren, BUGÜNÜN market-cap top-N'inden seçiliyor. Yani geçmişte var olup
+# bugün listede olmayan (çökmüş/delist olmuş) coinler hiç dahil edilmiyor;
+# yalnızca "hayatta kalanlar" optimize ediliyor. Bu, geçmiş getiri/risk
+# tahminlerini YUKARI yanlı (iyimser) yapabilir. Tarihsel (point-in-time)
+# market-cap sıralaması verimiz olmadığı için bu KOD ile çözülmüyor; bilinçli
+# bir sınır olarak kabul ediliyor. Raporlanan tüm metrikler bu sınır dahilinde
+# yorumlanmalıdır. (Holdout/out-of-sample metrikler in-sample iyimserliği azaltır
+# ama survivorship bias'ı gidermez.)
 
 def _get_fallback_coin_list() -> list:
     """
@@ -250,6 +315,7 @@ def fetch_top_coins(
 
     url = "https://api.coingecko.com/api/v3/coins/markets"
     all_coins = []
+    had_errors = False
     per_page = min(250, n_target)
     n_pages = int(np.ceil(n_target / per_page))
 
@@ -279,20 +345,37 @@ def fetch_top_coins(
                 if page < n_pages:
                     time.sleep(1.5)   # rate-limit nefesi (ücretsiz plan ~30 req/dk)
                 break
-            except Exception as e:
-                wait = 2 ** attempt   # 1, 2, 4 saniye
+            except (
+                requests.exceptions.SSLError,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+            ) as e:
+                wait = 2 ** attempt
                 if attempt < max_retries - 1:
                     print(f"  [Sayfa {page} deneme {attempt+1}/{max_retries}] "
-                          f"{type(e).__name__}: {e}  →  {wait}s bekle")
+                          f"Ağ hatası {type(e).__name__}: {e}  →  {wait}s bekle")
                     time.sleep(wait)
                 else:
-                    print(f"  [Uyarı] Sayfa {page} kesin başarısız: {e}")
+                    print(f"  [Uyarı] Sayfa {page} ağ hatası, fallback'e düşülecek: {e}")
+            except requests.exceptions.HTTPError as e:
+                wait = 2 ** attempt
+                if attempt < max_retries - 1:
+                    print(f"  [Sayfa {page} deneme {attempt+1}/{max_retries}] "
+                          f"HTTP hatası {e.response.status_code}: {e}  →  {wait}s bekle")
+                    time.sleep(wait)
+                else:
+                    print(f"  [Uyarı] Sayfa {page} HTTP hatası, fallback'e düşülecek: {e}")
+            except Exception as e:
+                print(f"  [Hata] Sayfa {page} beklenmeyen hata: {type(e).__name__}: {e}")
 
         if not success:
+            had_errors = True
             continue
 
     # ── FALLBACK: CoinGecko'ya erişilemezse bilinen top-100'ü kullan ──
-    if len(all_coins) == 0:
+    # Kısmi hata (bazı sayfalar başarısız) durumunda da tutarsız veri yerine
+    # bilinen sabit listeyi kullanmak daha güvenlidir.
+    if len(all_coins) == 0 or had_errors:
         print(f"\n[CoinGecko] ⚠ API'ye erişilemedi. FALLBACK listesi kullanılıyor.")
         print(f"  (İnternet/rate-limit problemi olabilir — daha sonra tekrar deneyin)")
         all_coins = _get_fallback_coin_list()
@@ -342,8 +425,91 @@ def fetch_top_coins(
 
 
 # ─────────────────────────────────────────────
-# 3. YFINANCE İLE FİYAT VERİSİ
+# 3. FİYAT VERİSİ: DB ÖNCE, YFINANCE FALLBACK
 # ─────────────────────────────────────────────
+
+def load_prices_from_db_or_fetch(
+    symbols: list,
+    lookback_days: int = 500,
+    min_lookback_days: int = 250,
+) -> pd.DataFrame:
+    """
+    Önce DB'yi kontrol eder. Tüm sembollerin beklenen kaydın %80'i DB'de mevcutsa
+    DB'den okur ve returns hesaplar. Herhangi bir sembol eksikse tüm veri seti için
+    yfinance'e düşer — bu sayede tarih hizalaması tutarlı kalır.
+
+    Parameters
+    ----------
+    symbols        : uppercase sembol listesi  (ör. ['BTC', 'ETH'])
+    lookback_days  : arka planda bakılacak gün sayısı
+    min_lookback_days : hizalama sırasında minimum pencere
+    """
+    import datetime
+    from assets.models import Asset, Price
+
+    end_date   = datetime.date.today() - datetime.timedelta(days=1)
+    start_date = end_date - datetime.timedelta(days=lookback_days + 30)
+    # Hafta sonları çıkarılınca beklenen işlem günü yaklaşımı
+    expected_rows = int(lookback_days * 5 / 7 * 0.8)
+
+    db_missing = []
+    for symbol in symbols:
+        try:
+            asset = Asset.objects.get(symbol=symbol)
+            count = Price.objects.filter(
+                asset=asset,
+                date__gte=start_date,
+                date__lte=end_date,
+            ).count()
+            if count < expected_rows:
+                print(f"[DB] {symbol}: {count}/{expected_rows} kayıt — yetersiz.")
+                db_missing.append(symbol)
+        except Asset.DoesNotExist:
+            print(f"[DB] {symbol}: Asset kaydı yok.")
+            db_missing.append(symbol)
+
+    # Tüm semboller DB'de yeterliyse → DB'den oku
+    if not db_missing:
+        print(f"[DB] Tüm {len(symbols)} sembol DB'den okunuyor "
+              f"({start_date} → {end_date})...")
+        rows = list(
+            Price.objects
+            .filter(
+                asset__symbol__in=symbols,
+                date__gte=start_date,
+                date__lte=end_date,
+            )
+            .values('asset__symbol', 'date', 'close')
+            .order_by('date', 'asset__symbol')
+        )
+        df_raw  = pd.DataFrame(rows)
+        prices  = df_raw.pivot(index='date', columns='asset__symbol', values='close')
+        prices  = prices[sorted(prices.columns)]
+        prices.index = pd.to_datetime(prices.index)
+        prices  = prices.astype(float).sort_index().ffill(limit=2).dropna(how='all')
+        returns_df = prices.pct_change().dropna()
+
+        if len(returns_df) >= 50:
+            print(f"[DB] ✓ {len(returns_df.columns)} coin, {len(returns_df)} gözlem "
+                  f"(pencere {lookback_days}g)")
+            return returns_df
+
+        print("[DB] DB verisi yetersiz gözlem (<50), yfinance'e düşülüyor...")
+    else:
+        print(f"[DB] {len(db_missing)} sembol eksik, yfinance kullanılıyor...")
+
+    # yfinance fallback
+    end_str   = end_date.strftime('%Y-%m-%d')
+    start_str = start_date.strftime('%Y-%m-%d')
+    print(f"[yfinance] {len(symbols)} sembol için {start_str} → {end_str} çekiliyor...")
+    return load_prices_from_yfinance(
+        symbols,
+        start=start_str,
+        end=end_str,
+        lookback_days=lookback_days,
+        min_lookback_days=min_lookback_days,
+    )
+
 
 def load_prices_from_yfinance(
     symbols: list,
@@ -509,6 +675,17 @@ def apply_sanity_filter(
     -------
     DataFrame : temizlenmiş returns_df
     """
+    # yfinance bazen ffill sonrası bile NaN bırakır (ör. listing günü öncesi
+    # yok-veri); NaN sütunu kovaryans matrisini ve risk metriklerini bozar →
+    # sanity filter eşiklerinden önce baştan elenmeli.
+    nan_cols = returns_df.columns[returns_df.isna().any()].tolist()
+    if nan_cols:
+        if verbose:
+            head = ", ".join(nan_cols[:10])
+            tail = "..." if len(nan_cols) > 10 else ""
+            print(f"[Sanity Filter] NaN içeren {len(nan_cols)} coin önden elendi: {head}{tail}")
+        returns_df = returns_df.drop(columns=nan_cols)
+
     daily_means = returns_df.mean()
     daily_vols  = returns_df.std()
     annual_vols = daily_vols * np.sqrt(periods_per_year)
@@ -622,6 +799,8 @@ def compute_cvar(weights: np.ndarray, returns_matrix: np.ndarray,
     CVaRα = E(ξ | ξ ≤ VaRα)   — Zhao et al. (2025) formülü
     Pozitif döndürür → minimize edilecek kayıp büyüklüğü.
     """
+    if np.isnan(returns_matrix).any():
+        raise ValueError("compute_cvar: returns_matrix NaN içeriyor")
     port_returns = returns_matrix @ weights
     if port_returns.size == 0:
         raise ValueError(
@@ -642,6 +821,8 @@ def compute_sharpe(weights: np.ndarray, mean_returns: np.ndarray,
     Sharpe oranı (yıllıklaştırılmış).
     Kripto 7/24 işlem gördüğü için yıllıklaştırma faktörü = 365.
     """
+    if np.isnan(mean_returns).any() or np.isnan(cov_matrix).any():
+        raise ValueError("compute_sharpe: mean_returns veya cov_matrix NaN içeriyor")
     ret = compute_portfolio_return(weights, mean_returns) * periods_per_year
     vol = compute_portfolio_volatility(weights, cov_matrix) * np.sqrt(periods_per_year)
     return (ret - risk_free_rate) / (vol + 1e-9)
@@ -660,6 +841,8 @@ def compute_sortino(weights: np.ndarray, returns_matrix: np.ndarray,
 
     target : minimum kabul edilebilir getiri (MAR), varsayılan 0
     """
+    if np.isnan(returns_matrix).any():
+        raise ValueError("compute_sortino: returns_matrix NaN içeriyor")
     port_returns = returns_matrix @ weights
     ann_return   = port_returns.mean() * periods_per_year
 
@@ -746,6 +929,118 @@ def compute_var(weights: np.ndarray, returns_matrix: np.ndarray,
 
 
 # ─────────────────────────────────────────────
+# 4.5. AĞIRLIK REPAIR  (kısıt projeksiyonu)
+# ─────────────────────────────────────────────
+
+def repair_weight_vector(x: np.ndarray, max_weight: float,
+                         tol: float = 1e-9) -> np.ndarray:
+    """Ham genomu geçerli bir long-only ağırlık vektörüne projekte eder.
+
+    Garantiler (verification target):
+        toplam = 1,  her wᵢ ≤ max_weight,  her wᵢ ≥ 0.
+
+    Neden basit X/sum(X) yetmez: normalizasyon toplam=1 sağlar AMA wᵢ ≤
+    max_weight'i sağlamaz; sum(X) < 1 olduğunda tek bir gen normalize sonrası
+    sınırı kat kat aşabilir (eski hatada tek-varlık ~%97). Burada capped/
+    iteratif "water-filling" projeksiyonu kullanılır: sınırı aşan ağırlıklar
+    max_weight'e kırpılır, taşan kütle sınıra ulaşmamış AKTİF genlere yeniden
+    dağıtılır; aşım kalmayana dek tekrarlanır.
+
+    Seyreklik (cardinality) korunur: yalnızca pozitif genler (aktif set) kütle
+    paylaşır; sıfır/negatif genler sıfır kalır. Taşan kütle, aktif uncapped
+    genlere ORANTILI dağıtılır (eşit değil) — böylece "dust" (çok küçük) genler
+    küçük kalır, kütle zaten anlamlı genlerde yoğunlaşır ve aktif/sıfır yapısı
+    bozulmaz. min/max_assets kısıtları repair'in işi DEĞİL — onlar problem G
+    vektöründe optimizatöre bırakılır. Repair sadece toplam=1'i mümkün kılacak
+    kadar (n_min = ⌈1/max_weight⌉) genin aktif olmasını garanti eder.
+
+    Determinizm: hiçbir rastgelelik yok; aktif set genişletilmesi gerekirse
+    genler büyük-x → küçük-index sırasıyla deterministik seçilir. Zaten geçerli
+    bir vektörde idempotenttir (aynısını döndürür).
+
+    Fizibilite ön-koşulu: max_weight * n_assets ≥ 1 olmalı; aksi halde toplam=1
+    capped sınırlarla imkânsızdır → anlamlı ValueError.
+    """
+    x = np.clip(np.asarray(x, dtype=float), 0.0, None)
+    n = x.size
+    if max_weight * n < 1.0 - tol:
+        raise ValueError(
+            f"max_weight={max_weight:.4g} ile {n} varlık için toplam=1 imkânsız "
+            f"(max_weight * n_assets = {max_weight * n:.4g} < 1). "
+            f"max_weight'i artırın veya varlık sayısını çoğaltın."
+        )
+
+    # toplam=1'e cap'lerle ulaşabilmek için gereken minimum aktif gen sayısı
+    n_min = int(np.ceil(1.0 / max_weight - tol))
+    n_min = max(1, min(n_min, n))
+
+    active = x > 0.0
+    if active.sum() < n_min:
+        # Aktif set yetersiz → toplam=1 fizibilitesi için deterministik genişlet:
+        # büyük-x öncelikli, eşitlikte küçük-index.
+        order = np.lexsort((np.arange(n), -x))
+        active = np.zeros(n, dtype=bool)
+        active[order[:n_min]] = True
+
+    w = np.zeros(n)
+    xa = x[active]
+    xa_sum = xa.sum()
+    if xa_sum <= tol:
+        w[active] = 1.0 / active.sum()
+    else:
+        w[active] = xa / xa_sum
+
+    # İteratif water-filling cap. Her tur sınırı aşan genler max_weight'e
+    # sabitlenir (bir daha azalmaz) → capped küme tekdüze büyür, en çok n turda
+    # yakınsar; range(n+1) güvenli üst sınır. Taşan kütle orantılı dağıtılır;
+    # under-toplam ihmal edilebilirse (tüm uncapped genler dust) eşit dağıtıma
+    # düşülür ki kütle bir yere gitsin.
+    for _ in range(n + 1):
+        over = w > max_weight
+        if not over.any():
+            break
+        excess = float((w[over] - max_weight).sum())
+        w[over] = max_weight
+        under = active & (w < max_weight)
+        n_under = int(under.sum())
+        if n_under == 0:
+            break
+        under_sum = float(w[under].sum())
+        if under_sum > tol:
+            w[under] += excess * (w[under] / under_sum)
+        else:
+            w[under] += excess / n_under
+
+    return w
+
+
+def repair_weights(X: np.ndarray, max_weight: float) -> np.ndarray:
+    """`repair_weight_vector`'ı tekil (1B) veya popülasyon (2B) girdiye uygular."""
+    X = np.asarray(X, dtype=float)
+    if X.ndim == 1:
+        return repair_weight_vector(X, max_weight)
+    return np.vstack([repair_weight_vector(row, max_weight) for row in X])
+
+
+class WeightRepair(Repair):
+    """pymoo Repair operatörü: her bireyin genomunu geçerli ağırlık vektörüne
+    (toplam=1, wᵢ≤max_weight, wᵢ≥0) projekte eder.
+
+    Mating sırasında offspring genomlarına uygulanır; arama feasible bölgede
+    kalır. Başlangıç popülasyonu pymoo tarafından repair edilmediğinden,
+    `_evaluate` ayrıca aynı projeksiyonu uygular (idempotent) → metrikler ve
+    kısıtlar daima sunulacak ağırlıklarla hesaplanır.
+    """
+
+    def __init__(self, max_weight: float):
+        super().__init__()
+        self.max_weight = max_weight
+
+    def _do(self, problem, X, **kwargs):
+        return repair_weights(X, self.max_weight)
+
+
+# ─────────────────────────────────────────────
 # 5. PYMOO PROBLEMİ
 # ─────────────────────────────────────────────
 
@@ -757,10 +1052,15 @@ class CryptoPortfolioProblem(Problem):
         f1 = -Beklenen Getiri        (min → aslında maksimize)
         f2 =  CVaR                   (min)
         f3 =  Volatilite  [opsiyonel](min)
-    Kısıtlar:
-        g1 = |Σwᵢ - 1| - 0.01        (ağırlıklar toplamı = 1)
-        g2 = min_assets - active     (≥ min_assets aktif varlık)
-        g3 = active - max_assets     (≤ max_assets aktif varlık)
+    Kısıtlar (2 eşitsizlik):
+        g1 = min_assets - active     (≥ min_assets aktif varlık)
+        g2 = active - max_assets     (≤ max_assets aktif varlık)
+
+    Not: Ağırlık fizibilitesi (Σwᵢ = 1, wᵢ ≤ max_weight, wᵢ ≥ 0) artık bir
+    KISIT değil; `WeightRepair` / `repair_weights` ile projeksiyon yoluyla
+    GARANTİ edilir (bkz. _evaluate). Eski |Σwᵢ-1| kısıtı, W normalize edildiği
+    için daima sağlanan vakum bir kısıttı ve kaldırıldı; geriye yalnızca
+    cardinality (aktif varlık sayısı) gerçek kısıtları kaldı.
     """
 
     def __init__(
@@ -785,8 +1085,20 @@ class CryptoPortfolioProblem(Problem):
         self.transaction_cost = transaction_cost
         self.min_assets       = min_assets
         self.max_assets       = max_assets
+        self.max_weight       = max_weight
         self.n_obj            = n_obj
         self.weight_threshold = weight_threshold
+
+        # Fizibilite ön-koşulu: cap'li ağırlıklarla toplam=1'e ulaşılabilmesi
+        # için max_weight * n_assets ≥ 1 olmalı (aksi halde repair toplam=1
+        # üretemez). Erken ve net hata ver.
+        if max_weight * self.n_assets < 1.0 - 1e-9:
+            raise ValueError(
+                f"max_weight={max_weight:.4g} ile {self.n_assets} varlık için "
+                f"toplam=1 imkânsız (max_weight * n_assets = "
+                f"{max_weight * self.n_assets:.4g} < 1). max_weight'i artırın "
+                f"veya daha fazla varlık kullanın."
+            )
 
         if current_weights is None:
             self.current_weights = np.ones(self.n_assets) / self.n_assets
@@ -796,23 +1108,31 @@ class CryptoPortfolioProblem(Problem):
         super().__init__(
             n_var=self.n_assets,
             n_obj=n_obj,
-            n_ieq_constr=3,
+            n_ieq_constr=2,
             xl=np.full(self.n_assets, min_weight),
             xu=np.full(self.n_assets, max_weight),
         )
 
     def _evaluate(self, X: np.ndarray, out: dict, *args, **kwargs):
         pop_size = X.shape[0]
-        weight_sums = X.sum(axis=1, keepdims=True)
-        W = X / (weight_sums + 1e-12)
+        # Ağırlık fizibilitesini projeksiyonla GARANTİ et (toplam=1,
+        # wᵢ≤max_weight, wᵢ≥0). Başlangıç popülasyonu pymoo tarafından repair
+        # edilmediği için burada da uygulanır; WeightRepair ile birlikte
+        # idempotenttir. Metrikler ve kısıtlar böylece daima gerçekten
+        # sunulacak ağırlıklarla hesaplanır.
+        W = repair_weights(X, self.max_weight)
 
         F = np.zeros((pop_size, self.n_obj))
-        G = np.zeros((pop_size, 3))
+        G = np.zeros((pop_size, 2))
 
+        n_days = self.returns_matrix.shape[0]
         for i in range(pop_size):
             w = W[i]
-            tc = self.transaction_cost * np.sum(np.abs(w - self.current_weights))
-            ret  = compute_portfolio_return(w, self.mean_returns) - tc
+            # TC bir kerelik rebalance maliyetidir; lookback gün sayısına
+            # amortize ederek günlük getiriden düş. Eskiden tüm TC günlük
+            # getiriden çıkıyordu → 5 varlıkta ~%60 yapay yıllık kayıp.
+            tc_daily = self.transaction_cost * np.sum(np.abs(w - self.current_weights)) / n_days
+            ret  = compute_portfolio_return(w, self.mean_returns) - tc_daily
             cvar = compute_cvar(w, self.returns_matrix, self.alpha)
 
             F[i, 0] = -ret
@@ -820,13 +1140,66 @@ class CryptoPortfolioProblem(Problem):
             if self.n_obj == 3:
                 F[i, 2] = compute_portfolio_volatility(w, self.cov_matrix)
 
-            G[i, 0] = abs(w.sum() - 1.0) - 0.01
+            # Yalnızca cardinality gerçek kısıt; toplam=1 ve max_weight repair
+            # ile garanti olduğundan G'den çıkarıldı (vakum kısıt temizliği).
             active  = np.sum(w > self.weight_threshold)
-            G[i, 1] = self.min_assets - active
-            G[i, 2] = active - self.max_assets
+            G[i, 0] = self.min_assets - active
+            G[i, 1] = active - self.max_assets
 
         out["F"] = F
         out["G"] = G
+
+
+# ─────────────────────────────────────────────
+# 5.5. HOLDOUT (TRAIN/TEST) BÖLME — out-of-sample değerlendirme
+# ─────────────────────────────────────────────
+
+# Holdout (out-of-sample) değerlendirme parametreleri. Optimizasyon TRAIN'de
+# yapılır, raporlanan metrikler DOKUNULMAMIŞ TEST'te hesaplanır → in-sample
+# (çifte-seçim) iyimserliği giderilir.
+HOLDOUT_TEST_FRACTION = 0.2   # son %20 kronolojik test penceresi
+MIN_TRAIN_OBS = 60            # train hâlâ anlamlı optimize edilebilmeli
+MIN_TEST_OBS = 30             # test ölçülebilir uzunlukta olmalı (CVaR/Sharpe)
+
+
+def chronological_train_test_split(
+    returns_df: pd.DataFrame,
+    test_fraction: float = HOLDOUT_TEST_FRACTION,
+    min_train_obs: int = MIN_TRAIN_OBS,
+    min_test_obs: int = MIN_TEST_OBS,
+) -> tuple:
+    """Returns_df'i kronolojik (zaman sıralı) train/test'e böler.
+
+    Bölme örtüşmesiz ve kronolojiktir: train = ilk (1 - test_fraction) oranı
+    (geçmiş), test = son test_fraction oranı (en yeni). Index'in artan zaman
+    sırasında olduğu varsayılır — pipeline (DB/yfinance yolları) sort_index
+    uyguladığı için bu garanti.
+
+    Out-of-sample değerlendirme mantığı: ağırlıklar TRAIN üzerinde
+    optimize/seçilir; performans metrikleri DOKUNULMAMIŞ TEST üzerinde
+    hesaplanır. Böylece raporlanan Sharpe/Sortino/CVaR/getiri, ağırlıkların
+    seçildiği veriden ayrı bir pencerede ölçülür.
+
+    Eşik altı veri → anlamlı ValueError (train optimize edilebilir, test
+    ölçülebilir kalmalı).
+
+    Returns
+    -------
+    (train_df, test_df)
+    """
+    n = len(returns_df)
+    n_test = int(round(n * test_fraction))
+    n_train = n - n_test
+    if n_train < min_train_obs or n_test < min_test_obs:
+        raise ValueError(
+            f"Holdout (out-of-sample) değerlendirme için yetersiz veri: "
+            f"{n} gözlemden train={n_train}, test={n_test} çıkıyor "
+            f"(gerekli: train ≥ {min_train_obs}, test ≥ {min_test_obs}). "
+            f"lookback_days'i artırın veya daha uzun geçmişi olan coinler kullanın."
+        )
+    train_df = returns_df.iloc[:n_train]
+    test_df = returns_df.iloc[n_train:]
+    return train_df, test_df
 
 
 # ─────────────────────────────────────────────
@@ -846,6 +1219,15 @@ def run_nsga3_optimization(
     seed: int = 42,
     verbose: bool = True,
 ) -> dict:
+    # Reproducibility: PYTHONHASHSEED process başında set edilmeli (etkili
+    # olması için start_celery.sh / start_django.sh wrapper'larını kullan).
+    # Aşağıdaki satır mevcut process'in hash seed'ini değiştirmez, sadece
+    # child process'lere işaret eder; asıl deterministiklik garantisi
+    # NumpyDuplicateElimination + numpy/random seed reset ile sağlanıyor.
+    os.environ['PYTHONHASHSEED'] = '0'
+    random.seed(seed)
+    np.random.seed(seed)
+
     print("\n" + "="*62)
     print("  NSGA-III Kripto Portföy Optimizasyonu")
     print(f"  Varlık sayısı : {len(returns_df.columns)}")
@@ -874,19 +1256,39 @@ def run_nsga3_optimization(
         ref_dirs=ref_dirs,
         pop_size=pop_size,
         sampling=FloatRandomSampling(),
+        selection=TournamentSelection(func_comp=_deterministic_comp),
         crossover=SBX(prob=0.9, eta=15),
         mutation=PM(prob=1.0 / problem.n_var, eta=20),
-        eliminate_duplicates=True,
+        # Offspring genomlarını feasible ağırlık simpleksine projekte et
+        # (toplam=1, wᵢ≤max_weight, wᵢ≥0). Arama feasible bölgede kalır.
+        repair=WeightRepair(max_weight),
+        eliminate_duplicates=NumpyDuplicateElimination(),
     )
 
-    res = minimize(
-        problem, algorithm, get_termination("n_gen", n_gen),
-        seed=seed, save_history=False, verbose=verbose,
-    )
+    if _threadpool_limits is not None:
+        with _threadpool_limits(limits=1):
+            res = minimize(
+                problem, algorithm, get_termination("n_gen", n_gen),
+                seed=seed, save_history=False, verbose=verbose,
+            )
+    else:
+        res = minimize(
+            problem, algorithm, get_termination("n_gen", n_gen),
+            seed=seed, save_history=False, verbose=verbose,
+        )
 
     X_opt = res.X
     F_opt = res.F
-    pareto_weights = X_opt / (X_opt.sum(axis=1, keepdims=True) + 1e-12)
+    if X_opt is None or len(X_opt) == 0:
+        raise RuntimeError(
+            "NSGA-III feasible çözüm bulamadı. "
+            "Kısıtları gevşetin: max_weight artırın, "
+            "min_assets azaltın veya n_gen artırın."
+        )
+    # Nihai ağırlıklar da aynı repair'den geçer → çıktı kısıtları (toplam=1,
+    # wᵢ≤max_weight) optimizasyon sırasındakiyle birebir aynı garantiyle taşır.
+    # Eski ham X/sum(X) max_weight'i aşabiliyordu (kapatılan 🔴 bulgu).
+    pareto_weights = repair_weights(X_opt, max_weight)
 
     print(f"\n  Pareto-optimal çözüm sayısı: {len(pareto_weights)}")
 
@@ -909,6 +1311,7 @@ def select_portfolio_strategies(
     returns_df: pd.DataFrame,
     alpha: float = 0.05,
     periods_per_year: int = 365,
+    eval_returns_df: pd.DataFrame = None,
 ) -> dict:
     """
     Pareto cephesinden 5 strateji seç:
@@ -917,84 +1320,144 @@ def select_portfolio_strategies(
         3. Min CVaR     — en güvenli (tail-risk minimum)
         4. Max Return   — en agresif
         5. Balanced     — ideal noktaya en yakın (ortalama)
+
+    Tie-break: Her seçimde önce hiç sahiplenilmemiş indeksler arasından, hepsi
+    sahiplenilmişse en az kez seçilenler arasından en iyi skor seçilir. Cephe
+    ≥5 noktaysa 5 benzersiz strateji çıkar; <5 noktaysa zorunlu paylaşım
+    minimum tekrarla yapılır ve tekrarlı stratejiler `is_duplicate=True`
+    bayrağıyla işaretlenir (UI'da uyarı için).
+
+    Önceliklendirme: sharpe → min_cvar → max_return → max_sortino → balanced.
+
+    SEÇİM vs METRİK penceresi:
+      - SEÇİM (hangi Pareto noktası hangi strateji) DAİMA `returns_df`
+        (= optimizasyon/train penceresi) üzerinde yapılır; karar anında elde
+        olan veri budur.
+      - METRİK TABLOSU (annual_return/Sharpe/Sortino/CVaR/...) `eval_returns_df`
+        verildiyse ORADA (out-of-sample/holdout test penceresi) hesaplanır;
+        verilmediyse geriye-uyumlu olarak `returns_df` (in-sample) kullanılır.
+    Bu ayrım, raporlanan metriklerin ağırlıkların seçildiği veriden AYRI bir
+    pencerede ölçülmesini sağlar (in-sample iyimserliğini giderir).
+
+    Her stratejiye `pareto_index` (cephedeki konum indeksi) eklenir; UI grafik
+    işaretçilerini metrik değerine bağlı mesafe eşlemesi yerine bu indeksle
+    konumlandırır (out-of-sample metrik in-sample cephe konumundan ayrıştığında
+    işaretçilerin kaymaması için).
     """
     mean_ret = returns_df.mean().values
     cov_mat  = returns_df.cov().values
     ret_mat  = returns_df.values
 
-    strategies = {}
     n = len(pareto_weights)
+    pick_count: dict[int, int] = {i: 0 for i in range(n)}
 
-    # 1. Max Sharpe
+    def _pick(scores: np.ndarray, minimize: bool) -> tuple[int, bool]:
+        """En az sahiplenilmiş indeksler arasından en iyi skoru olanı seç.
+
+        Returns (idx, is_duplicate) — is_duplicate True ise bu indeks bu
+        çağrıdan önce zaten başka bir strateji tarafından seçilmiş demektir.
+        """
+        arr = np.asarray(scores, dtype=float)
+        min_count = min(pick_count.values())
+        candidates = [i for i, c in pick_count.items() if c == min_count]
+        if minimize:
+            idx = min(candidates, key=lambda i: arr[i])
+        else:
+            idx = max(candidates, key=lambda i: arr[i])
+        is_dup = pick_count[idx] > 0
+        pick_count[idx] += 1
+        return idx, is_dup
+
+    # Skorları bir kez hesapla; pick sırası farklı olsa da metrikler değişmez.
     sharpes = np.array([
         compute_sharpe(pareto_weights[i], mean_ret, cov_mat,
                        periods_per_year=periods_per_year)
         for i in range(n)
     ])
-    strategies["max_sharpe"] = {
-        "weights": pareto_weights[int(np.argmax(sharpes))],
-        "name":    "Max Sharpe",
-        "color":   "#1D9E75",
-        "marker":  "★",
-    }
-
-    # 2. Max Sortino  (YENİ)
     sortinos = np.array([
         compute_sortino(pareto_weights[i], ret_mat,
                         periods_per_year=periods_per_year)
         for i in range(n)
     ])
-    # sonsuz değerleri maskele
     sortinos_finite = np.where(np.isfinite(sortinos), sortinos, -np.inf)
-    strategies["max_sortino"] = {
-        "weights": pareto_weights[int(np.argmax(sortinos_finite))],
-        "name":    "Max Sortino",
-        "color":   "#E8A33D",
-        "marker":  "✦",
-    }
-
-    # 3. Min CVaR
-    strategies["min_cvar"] = {
-        "weights": pareto_weights[int(np.argmin(pareto_F[:, 1]))],
-        "name":    "Min CVaR",
-        "color":   "#378ADD",
-        "marker":  "◆",
-    }
-
-    # 4. Max Return  (F[:,0] = -return → min)
-    strategies["max_return"] = {
-        "weights": pareto_weights[int(np.argmin(pareto_F[:, 0]))],
-        "name":    "Max Return",
-        "color":   "#D85A30",
-        "marker":  "▲",
-    }
-
-    # 5. Balanced
     F_norm = (pareto_F - pareto_F.min(0)) / (np.ptp(pareto_F, axis=0) + 1e-12)
     dists  = np.linalg.norm(F_norm, axis=1)
-    strategies["balanced"] = {
-        "weights": pareto_weights[int(np.argmin(dists))],
-        "name":    "Balanced",
-        "color":   "#7F77DD",
-        "marker":  "●",
+
+    # Önceliklendirilmiş seçim (claim sırası).
+    sharpe_idx,     sharpe_dup     = _pick(sharpes,         minimize=False)
+    min_cvar_idx,   min_cvar_dup   = _pick(pareto_F[:, 1],  minimize=True)
+    max_return_idx, max_return_dup = _pick(pareto_F[:, 0],  minimize=True)
+    sortino_idx,    sortino_dup    = _pick(sortinos_finite, minimize=False)
+    balanced_idx,   balanced_dup   = _pick(dists,           minimize=True)
+
+    # Görüntü/insertion sırası UI ile uyumlu kalır (önceki davranış).
+    strategies: dict = {
+        "max_sharpe": {
+            "weights":      pareto_weights[sharpe_idx],
+            "name":         "Max Sharpe",
+            "color":        "#1D9E75",
+            "marker":       "★",
+            "is_duplicate": sharpe_dup,
+            "pareto_index": int(sharpe_idx),
+        },
+        "max_sortino": {
+            "weights":      pareto_weights[sortino_idx],
+            "name":         "Max Sortino",
+            "color":        "#E8A33D",
+            "marker":       "✦",
+            "is_duplicate": sortino_dup,
+            "pareto_index": int(sortino_idx),
+        },
+        "min_cvar": {
+            "weights":      pareto_weights[min_cvar_idx],
+            "name":         "Min CVaR",
+            "color":        "#378ADD",
+            "marker":       "◆",
+            "is_duplicate": min_cvar_dup,
+            "pareto_index": int(min_cvar_idx),
+        },
+        "max_return": {
+            "weights":      pareto_weights[max_return_idx],
+            "name":         "Max Return",
+            "color":        "#D85A30",
+            "marker":       "▲",
+            "is_duplicate": max_return_dup,
+            "pareto_index": int(max_return_idx),
+        },
+        "balanced": {
+            "weights":      pareto_weights[balanced_idx],
+            "name":         "Balanced",
+            "color":        "#7F77DD",
+            "marker":       "●",
+            "is_duplicate": balanced_dup,
+            "pareto_index": int(balanced_idx),
+        },
     }
+
+    # Metrik penceresi: eval_returns_df verildiyse metrikler ORADA (out-of-sample
+    # holdout) hesaplanır; aksi halde returns_df (in-sample, geriye-uyumlu).
+    # n_active ağırlıkların yapısal özelliği olduğu için pencereden bağımsızdır.
+    metric_df = eval_returns_df if eval_returns_df is not None else returns_df
+    m_mean = metric_df.mean().values
+    m_cov  = metric_df.cov().values
+    m_ret  = metric_df.values
 
     # Her strateji için metrik tablosu
     ann = periods_per_year
     for key, strat in strategies.items():
         w = strat["weights"]
-        strat["annual_return"] = compute_portfolio_return(w, mean_ret) * ann
-        strat["annual_vol"]    = compute_portfolio_volatility(w, cov_mat) * np.sqrt(ann)
-        strat["sharpe"]        = compute_sharpe(w, mean_ret, cov_mat,
+        strat["annual_return"] = compute_portfolio_return(w, m_mean) * ann
+        strat["annual_vol"]    = compute_portfolio_volatility(w, m_cov) * np.sqrt(ann)
+        strat["sharpe"]        = compute_sharpe(w, m_mean, m_cov,
                                                 periods_per_year=ann)
-        strat["sortino"]       = compute_sortino(w, ret_mat, periods_per_year=ann)
-        strat["calmar"]        = compute_calmar(w, mean_ret, ret_mat,
+        strat["sortino"]       = compute_sortino(w, m_ret, periods_per_year=ann)
+        strat["calmar"]        = compute_calmar(w, m_mean, m_ret,
                                                 periods_per_year=ann)
-        strat["omega"]         = compute_omega(w, ret_mat, threshold=0.0)
-        strat["var_daily"]     = compute_var(w, ret_mat, alpha)
-        strat["cvar_daily"]    = compute_cvar(w, ret_mat, alpha)
+        strat["omega"]         = compute_omega(w, m_ret, threshold=0.0)
+        strat["var_daily"]     = compute_var(w, m_ret, alpha)
+        strat["cvar_daily"]    = compute_cvar(w, m_ret, alpha)
         strat["cvar_annual"]   = strat["cvar_daily"] * np.sqrt(ann)
-        strat["max_drawdown"]  = compute_max_drawdown(w, ret_mat)
+        strat["max_drawdown"]  = compute_max_drawdown(w, m_ret)
         strat["n_active"]      = int(np.sum(w > 0.005))
 
     return strategies
@@ -1291,11 +1754,9 @@ def main(
 
     symbols = top_coins_df["symbol"].tolist()
 
-    # ── B) Fiyat verisi ───────────────────────────────────────────────
-    returns_df = load_prices_from_yfinance(
+    # ── B) Fiyat verisi — DB önce, yfinance fallback ─────────────────
+    returns_df = load_prices_from_db_or_fetch(
         symbols,
-        start="2022-01-01",
-        end="2025-12-31",
         lookback_days=750,
         min_lookback_days=400,
     )

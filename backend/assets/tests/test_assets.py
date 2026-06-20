@@ -1,8 +1,15 @@
+import datetime
+import pandas as pd
 import pytest
+from io import StringIO
+from unittest.mock import patch, MagicMock
+from django.conf import settings
+from django.core.management import call_command
+from django.db import models as django_models
 from django.urls import reverse
 from rest_framework.test import APIClient
 from users.models import User
-from assets.models import Asset, Watchlist
+from assets.models import Asset, Price, Watchlist
 
 
 @pytest.fixture
@@ -104,3 +111,119 @@ class TestWatchlist:
         entry = Watchlist.objects.create(user=other_user, asset=asset)
         response = auth_client.delete(reverse('watchlist_delete', kwargs={'pk': entry.id}))
         assert response.status_code == 404
+
+
+class TestPriceModelFields:
+    def test_price_model_has_source_field(self):
+        field = Price._meta.get_field('source')
+        assert isinstance(field, django_models.CharField)
+        assert field.default == 'yfinance'
+
+    def test_price_model_has_fetched_at_field(self):
+        field = Price._meta.get_field('fetched_at')
+        assert isinstance(field, django_models.DateTimeField)
+        assert field.editable is False
+
+    def test_price_model_has_index(self):
+        index_fields = [
+            tuple(idx.fields) for idx in Price._meta.indexes
+        ]
+        assert ('asset', 'date') in index_fields
+
+    @pytest.mark.django_db
+    def test_price_object_creation(self, asset):
+        import datetime
+        price = Price.objects.create(
+            asset=asset,
+            date=datetime.date(2025, 1, 1),
+            open=50000,
+            high=51000,
+            low=49000,
+            close=50500,
+            volume=1000000,
+        )
+        assert price.source == 'yfinance'
+        assert price.fetched_at is not None
+
+
+@pytest.mark.django_db
+class TestFetchPricesCommand:
+    def test_command_no_assets(self, db):
+        Asset.objects.filter(is_active=True).delete()
+        out = StringIO()
+        call_command('fetch_prices', stdout=out)
+        assert 'ERROR' not in out.getvalue()
+
+    def test_command_skips_asset_on_error(self, db):
+        Asset.objects.create(symbol='BTC', name='Bitcoin', is_active=True)
+        Asset.objects.create(symbol='ETH', name='Ethereum', is_active=True)
+        out = StringIO()
+        with patch(
+            'assets.management.commands.fetch_prices.yf.Ticker',
+            side_effect=Exception('network error'),
+        ):
+            call_command('fetch_prices', stdout=out)
+        output = out.getvalue()
+        assert 'HATA' in output
+        assert 'Tamamlandı' in output
+
+    def test_command_warns_on_empty_data(self, db):
+        Asset.objects.create(symbol='BTC', name='Bitcoin', is_active=True)
+        out = StringIO()
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = pd.DataFrame()
+        with patch(
+            'assets.management.commands.fetch_prices.yf.Ticker',
+            return_value=mock_ticker,
+        ):
+            call_command('fetch_prices', stdout=out)
+        assert 'WARNING' in out.getvalue()
+
+
+def _make_price_df(date=None):
+    if date is None:
+        date = datetime.date.today() - datetime.timedelta(days=1)
+    idx = pd.DatetimeIndex([pd.Timestamp(date)])
+    return pd.DataFrame(
+        {'Open': [100.0], 'High': [110.0], 'Low': [90.0], 'Close': [105.0], 'Volume': [1000]},
+        index=idx,
+    )
+
+
+@pytest.mark.django_db
+class TestDailyPriceSnapshot:
+    def test_snapshot_saves_price(self, db):
+        asset = Asset.objects.create(symbol='BTC', name='Bitcoin', is_active=True)
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = _make_price_df()
+        with patch('assets.tasks.yf.Ticker', return_value=mock_ticker):
+            from assets.tasks import daily_price_snapshot
+            result = daily_price_snapshot()
+        assert result['saved'] == 1
+        assert result['skipped'] == 0
+        assert Price.objects.filter(asset=asset).count() == 1
+
+    def test_snapshot_skips_on_empty_df(self, db):
+        Asset.objects.create(symbol='BTC', name='Bitcoin', is_active=True)
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = pd.DataFrame()
+        with patch('assets.tasks.yf.Ticker', return_value=mock_ticker):
+            from assets.tasks import daily_price_snapshot
+            result = daily_price_snapshot()
+        assert result['saved'] == 0
+        assert result['skipped'] == 1
+        assert Price.objects.count() == 0
+
+    def test_snapshot_continues_on_error(self, db):
+        Asset.objects.create(symbol='BTC', name='Bitcoin', is_active=True)
+        Asset.objects.create(symbol='ETH', name='Ethereum', is_active=True)
+        with patch('assets.tasks.yf.Ticker', side_effect=Exception('network')):
+            from assets.tasks import daily_price_snapshot
+            result = daily_price_snapshot()
+        assert result['skipped'] == 2
+        assert Price.objects.count() == 0
+
+    def test_beat_schedule_configured(self):
+        assert 'daily-price-snapshot' in settings.CELERY_BEAT_SCHEDULE
+        task_cfg = settings.CELERY_BEAT_SCHEDULE['daily-price-snapshot']
+        assert task_cfg['task'] == 'assets.tasks.daily_price_snapshot'

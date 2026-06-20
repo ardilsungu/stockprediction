@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { environment } from '../../../environments/environment';
+import { Asset, PricePoint, WatchlistItem } from '../models';
 
 @Injectable({ providedIn: 'root' })
 export class AssetService {
@@ -9,19 +10,23 @@ export class AssetService {
 
   constructor(private http: HttpClient) {}
 
-  getAssets(): Observable<any[]> {
-    return this.http.get<any[]>(`${this.base}/`);
+  getAssets(): Observable<Asset[]> {
+    return this.http.get<Asset[]>(`${this.base}/`);
   }
 
-  getWatchlist(): Observable<any[]> {
-    return this.http.get<any[]>(`${this.base}/watchlist/`);
+  getWatchlist(): Observable<WatchlistItem[]> {
+    return this.http.get<WatchlistItem[]>(`${this.base}/watchlist/`);
   }
 
-  addToWatchlist(assetId: string): Observable<any> {
-    return this.http.post<any>(`${this.base}/watchlist/`, { asset_id: assetId });
+  addToWatchlist(assetId: string): Observable<WatchlistItem> {
+    return this.http.post<WatchlistItem>(`${this.base}/watchlist/`, { asset_id: assetId });
   }
 
-  removeFromWatchlist(id: string): Observable<any> {
-    return this.http.delete<any>(`${this.base}/watchlist/${id}/`);
+  removeFromWatchlist(id: string): Observable<void> {
+    return this.http.delete<void>(`${this.base}/watchlist/${id}/`);
+  }
+
+  getPriceHistory(symbol: string, days = 30): Observable<PricePoint[]> {
+    return this.http.get<PricePoint[]>(`${this.base}/${symbol}/prices/`, { params: { days } });
   }
 }

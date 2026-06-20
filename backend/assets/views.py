@@ -2,7 +2,7 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from .models import Asset, Watchlist
+from .models import Asset, Price, Watchlist
 from .serializers import AssetSerializer, WatchlistSerializer
 
 
@@ -27,6 +27,28 @@ def watchlist(request):
         serializer.save()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def price_history(request, symbol):
+    try:
+        asset = Asset.objects.get(symbol__iexact=symbol, is_active=True)
+    except Asset.DoesNotExist:
+        return Response({'error': 'Bulunamadı.'}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        days = int(request.query_params.get('days', 30))
+    except (TypeError, ValueError):
+        return Response({'error': 'days sayısal olmalıdır.'}, status=status.HTTP_400_BAD_REQUEST)
+    days = max(1, min(days, 750))
+
+    prices = Price.objects.filter(asset=asset).order_by('-date')[:days]
+    data = [
+        {'date': p.date.isoformat(), 'close': float(p.close)}
+        for p in reversed(list(prices))
+    ]
+    return Response(data)
 
 
 @api_view(['DELETE'])

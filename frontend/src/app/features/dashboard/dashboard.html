@@ -3,26 +3,25 @@
     <div>
       <h1 class="page-title">Dashboard</h1>
       @if (profile) {
-        <p class="page-subtitle">Hoş geldin, <strong>{{ profile.username }}</strong></p>
+        <p class="page-subtitle">Welcome, <strong>{{ profile.username }}</strong></p>
       }
     </div>
     <div class="header-actions">
-      <a routerLink="/watchlist" class="btn btn-outline">Watchlist'im</a>
-      <a routerLink="/portfolio" class="btn btn-primary">+ Yeni Optimizasyon</a>
+      <a routerLink="/portfolio" class="btn btn-primary">+ New Optimization</a>
     </div>
   </div>
 
   <div class="card">
-    <h2 class="card-title">Son Optimizasyonlar</h2>
+    <h2 class="card-title">All Optimizations</h2>
 
     @if (loading) {
-      <p class="muted">Yükleniyor...</p>
+      <p class="muted">Loading...</p>
     } @else if (recentJobs.length === 0) {
-      <p class="muted">Henüz bir optimizasyon çalıştırmadın.</p>
+      <p class="muted">You haven't run any optimizations yet.</p>
     } @else {
       <div class="job-list">
         @for (job of recentJobs; track job.id) {
-          <div class="job-row">
+          <div class="job-row job-row-clickable" (click)="openJob(job.id)">
             <div class="job-info">
               <span class="job-id">{{ job.id.slice(0, 8) }}...</span>
               <span class="job-date">{{ job.created_at | date: 'dd MMM, HH:mm' }}</span>

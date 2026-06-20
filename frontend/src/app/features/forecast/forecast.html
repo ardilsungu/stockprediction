@@ -1,0 +1,130 @@
+<div class="page">
+  <div class="page-header">
+    <h1 class="page-title">Price Forecast</h1>
+    <p class="page-subtitle">Time series price forecasting with Prophet & LSTM</p>
+  </div>
+
+  <div class="card mb-24">
+    <h2 class="card-title">Parameters</h2>
+    <form [formGroup]="form" (ngSubmit)="onSubmit()" class="param-form">
+      <div class="param-grid">
+        <div class="form-group">
+          <label>Asset</label>
+          <select formControlName="asset">
+            <option value="" disabled>Select an asset…</option>
+            @for (a of assets(); track a.id) {
+              <option [value]="a.id">{{ a.symbol }} — {{ a.name }}</option>
+            }
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Model</label>
+          <select formControlName="model_type">
+            <option value="prophet">Prophet</option>
+            <option value="lstm">LSTM</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Horizon (days)</label>
+          <input type="number" formControlName="horizon_days" min="1" max="365" />
+          <span class="hint">1 – 365</span>
+        </div>
+      </div>
+
+      @if (errorMessage) {
+        <div class="error-banner">{{ errorMessage }}</div>
+      }
+
+      <button type="submit" class="btn-primary" [disabled]="submitting">
+        {{ submitting ? 'Forecasting...' : 'Forecast' }}
+      </button>
+    </form>
+  </div>
+
+  @if (currentJob(); as job) {
+    <div class="card mb-24">
+      <div class="job-status-row">
+        <h2 class="card-title" style="margin:0">Job Status</h2>
+        <span class="badge {{ statusClass(job.status) }}">{{ statusLabel(job.status) }}</span>
+      </div>
+      <p class="muted mt-8">ID: {{ job.id }}</p>
+
+      @if (isRunning()) {
+        <div class="running-row">
+          <span class="spinner"></span>
+          <span class="muted">Training model, this may take a few minutes...</span>
+        </div>
+        <div class="progress-bar"><div class="progress-fill"></div></div>
+      }
+
+      @if (job.status === 'failed') {
+        <div class="error-banner mt-8">{{ job.error_message || 'Forecast failed.' }}</div>
+      }
+    </div>
+  }
+
+  @if (hasResult()) {
+    @if (currentJob()?.result; as result) {
+      <div class="card mb-24">
+        <h2 class="card-title">Model Performance</h2>
+        <div class="metric-cards">
+          <div class="metric-card">
+            <span class="metric-label">MAE</span>
+            <span class="metric-value">{{ result.mae | number:'1.2-2' }}</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">RMSE</span>
+            <span class="metric-value">{{ result.rmse | number:'1.2-2' }}</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Baseline MAE (naive)</span>
+            <span class="metric-value">{{ result.predictions.baseline.mae | number:'1.2-2' }}</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Baseline RMSE (naive)</span>
+            <span class="metric-value">{{ result.predictions.baseline.rmse | number:'1.2-2' }}</span>
+          </div>
+        </div>
+        <p class="muted mt-8">Baseline: naive persistence (tomorrow = today) — the model should stay below these values over the same test period.</p>
+      </div>
+
+      <div class="card mb-24">
+        <h2 class="card-title">Price History & Forecast</h2>
+        <div class="chart-legend">
+          <span class="legend-item"><span class="legend-line history"></span> History (30 days)</span>
+          <span class="legend-item"><span class="legend-line predicted"></span> Forecast</span>
+          <span class="legend-item"><span class="legend-line ci"></span> Confidence Interval</span>
+        </div>
+        <div class="chart-wrapper">
+          <div #chartContainer class="chart-container"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">Predictions ({{ result.predictions.points.length }} days)</h2>
+        <div class="table-wrapper">
+          <table class="result-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Forecast</th>
+                <th>Lower CI</th>
+                <th>Upper CI</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (p of result.predictions.points; track p.date) {
+                <tr>
+                  <td>{{ p.date }}</td>
+                  <td class="strategy-name">{{ p.predicted | number:'1.2-2' }}</td>
+                  <td>{{ p.lower_ci | number:'1.2-2' }}</td>
+                  <td>{{ p.upper_ci | number:'1.2-2' }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    }
+  }
+</div>

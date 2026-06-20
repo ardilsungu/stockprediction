@@ -36,7 +36,7 @@ export class Login {
     this.authService.login(email, password).subscribe({
       next: () => this.router.navigate(['/dashboard']),
       error: (err) => {
-        this.errorMessage = err.error?.error || 'Giriş başarısız. Bilgilerinizi kontrol edin.';
+        this.errorMessage = err.error?.error || 'Sign in failed. Check your credentials.';
         this.loading = false;
       },
     });
